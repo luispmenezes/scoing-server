@@ -10,6 +10,8 @@ pandas = "*"
 psycopg2-binary = "*"
 config = "*"
 requests = "*"
+sklearn = "*"
+keras = "*"
 
 [requires]
 python_version = "3.8"

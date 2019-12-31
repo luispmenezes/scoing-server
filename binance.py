@@ -3,6 +3,7 @@ import requests
 import datetime
 from enum import Enum
 
+
 class Symbol(Enum):
     BITCOIN = 'BTCUSDT'
     ETHEREUM = 'ETHUSDT'
@@ -32,7 +33,7 @@ class Client:
 
     def klines(self, symbol, interval, start_time=None, end_time=None):
         print('Get Klines (symbol:%s, interval:%s, start_time=%s, end_time=%s)' % (
-        symbol, interval, start_time, end_time))
+            symbol, interval, start_time, end_time))
         params = {'symbol': symbol, 'interval': interval, 'limit': 1000}
         if start_time is not None:
             params['startTime'] = get_epoch(start_time)
@@ -57,11 +58,14 @@ class Client:
 
         return jsonData
 
+
 def get_epoch(date):
     return int(date.strftime('%s')) * 1000
 
+
 def get_exchange_startime():
-    return datetime.datetime(2017,8,17,4,0,tzinfo=pytz.UTC)
+    return datetime.datetime(2017, 8, 17, 4, 0, tzinfo=pytz.UTC)
+
 
 def get_coin_list():
     return [s.value for s in Symbol]
