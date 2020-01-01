@@ -43,10 +43,11 @@ class Collector:
                     (coin, datetime.fromtimestamp((data[0] / 1000.0), tz=pytz.UTC), float(data[1]), float(data[2]),
                      float(data[3]), float(data[4]), float(data[5]), float(data[7]), int(data[8]),
                      float(data[9]), float(data[10])))
-            insert_query = "INSERT INTO cointron.binance_data VALUES" + ','.join(['%s'] * len(records_to_insert))
 
-            self.db_cursor.execute(insert_query, records_to_insert)
-            self.connection.commit()
+            if len(records_to_insert) > 0:
+                insert_query = "INSERT INTO cointron.binance_data VALUES" + ','.join(['%s'] * len(records_to_insert))
+                self.db_cursor.execute(insert_query, records_to_insert)
+                self.connection.commit()
 
             loop_start_time += timedelta(days=5)
 
@@ -78,49 +79,60 @@ class Collector:
 
             self.db_cursor.execute("SELECT open_value FROM cointron.binance_data WHERE coin=%s AND open_time=%s",
                                    (coin, cursor_time + timedelta(minutes=aggregation)))
-            prediction = self.db_cursor.fetchone()[0]
+            prediction = self.db_cursor.fetchone()
 
-            self.db_cursor.execute(
-                "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
-                (coin, cursor_time - timedelta(minutes=aggregation), cursor_time))
+            if prediction is not None:
 
-            df = pd.DataFrame(self.db_cursor.fetchall(), columns=['coin', 'open_time', 'open_value', 'high', 'low',
-                                                                  'close_value', 'volume', 'quote_asset_volume',
-                                                                  'trades',
-                                                                  'taker_buy_base_asset_volume',
-                                                                  'taker_buy_quote_asset_volume'])
-            open_value = df['open_value'].iloc[0]
-            high = df['high'].max()
-            low = df['low'].min()
-            close_value = df['close_value'].iloc[-1]
-            volume = df['volume'].sum()
-            quote_asset_volume = df['quote_asset_volume'].mean()
-            trades = int(df['trades'].sum())
-            taker_buy_base_asset_volume = df['taker_buy_base_asset_volume'].mean()
-            taker_buy_quote_asset_volume = df['taker_buy_quote_asset_volume'].mean()
-            prediction_delta = (prediction / close_value) - 1
+                prediction = prediction[0]
 
-            records_to_insert.append(coin, aggregation, cursor_time, open_value, high, low, close_value, volume,
-                                quote_asset_volume, trades, taker_buy_base_asset_volume, taker_buy_quote_asset_volume,
-                                prediction_delta)
+                self.db_cursor.execute(
+                    "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
+                    (coin, cursor_time - timedelta(minutes=aggregation), cursor_time))
 
-            if cursor_time.day % 2 == 0:
-                insert_query = "INSERT INTO cointron.training_data VALUES"  + ','.join(['%s'] * len(records_to_insert))
-                self.db_cursor.execute(insert_query, records_to_insert)
-                self.connection.commit()
-                records_to_insert.clear()
+                df = pd.DataFrame(self.db_cursor.fetchall(), columns=['coin', 'open_time', 'open_value', 'high', 'low',
+                                                                      'close_value', 'volume', 'quote_asset_volume',
+                                                                      'trades',
+                                                                      'taker_buy_base_asset_volume',
+                                                                      'taker_buy_quote_asset_volume'])
 
+                if df.shape[0] > 0:
+                    open_value = df['open_value'].iloc[0]
+                    high = df['high'].max()
+                    low = df['low'].min()
+                    close_value = df['close_value'].iloc[-1]
+                    volume = df['volume'].sum()
+                    quote_asset_volume = df['quote_asset_volume'].mean()
+                    trades = int(df['trades'].sum())
+                    taker_buy_base_asset_volume = df['taker_buy_base_asset_volume'].mean()
+                    taker_buy_quote_asset_volume = df['taker_buy_quote_asset_volume'].mean()
+                    prediction_delta = (prediction / close_value) - 1
+
+                    records_to_insert.append((coin, aggregation, cursor_time, open_value, high, low, close_value, volume,
+                                              quote_asset_volume, trades, taker_buy_base_asset_volume,
+                                              taker_buy_quote_asset_volume,
+                                              prediction_delta))
+                else:
+                    print("No entries to aggregate")
+
+                if cursor_time.day % 2 == 0 and cursor_time.hour == 0 and cursor_time.minute == 0:
+                    insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(
+                        ['%s'] * len(records_to_insert))
+                    self.db_cursor.execute(insert_query, records_to_insert)
+                    self.connection.commit()
+                    records_to_insert.clear()
+            else:
+                print("No prediction at timestamp %s" % (cursor_time + timedelta(minutes=aggregation)))
             cursor_time += timedelta(minutes=1)
-
 
     def update_training_data(self):
         for coin in binance.get_coin_list():
             latest_data_timestamp = self.exchange_data_get_latest_timestamp(coin)
             latest_timestamp = self.training_data_get_latest_timestamp(coin)
-            if latest_timestamp is not None:
-                print("Updating Training Data for %s from %s to %s" % (coin, latest_timestamp, latest_data_timestamp))
-                self.grab_training_data(coin, 15, latest_timestamp.replace(tz=pytz.UTC) + timedelta(minutes=1),
-                                        latest_data_timestamp.replace(tz=pytz.UTC) - timedelta(minutes=15))
+            if latest_timestamp is None:
+                latest_timestamp = binance.get_exchange_startime()
+            print("Updating Training Data for %s from %s to %s" % (coin, latest_timestamp, latest_data_timestamp))
+            self.grab_training_data(coin, 15, latest_timestamp.replace(tzinfo=pytz.UTC) + timedelta(minutes=1),
+                                    latest_data_timestamp.replace(tzinfo=pytz.UTC) - timedelta(minutes=15))
 
     def get_training_data(self, coin, aggregation=15, start_time=binance.get_exchange_startime(),
                           end_time=datetime.utcnow().replace(tzinfo=pytz.UTC)):
