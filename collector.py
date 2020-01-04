@@ -24,6 +24,10 @@ class Collector:
         except (Exception, psycopg2.Error) as error:
             print("Error establishing db connection", error)
 
+    def get_binance_data_collumns(self):
+        return ['coin', 'open_time', 'open_value', 'high', 'low', 'close_value', 'volume', 'quote_asset_volume',
+                'trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume']
+
     def exchange_data_get_latest_timestamp(self, coin):
         self.db_cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
         return self.db_cursor.fetchone()[0]
@@ -62,137 +66,109 @@ class Collector:
                 latest_timestamp = latest_timestamp.replace(tzinfo=pytz.UTC) + timedelta(minutes=1)
 
             print("Updating binance data from %s" % (latest_timestamp))
-            self.grab_exchange_data(coin, latest_timestamp)
+            self.grab_exchange_data(coin, latest_timestamp,
+                                    datetime.utcnow().replace(tzinfo=pytz.UTC) + timedelta(minutes=1))
 
     def training_data_get_latest_timestamp(self, coin):
         self.db_cursor.execute("SELECT MAX(open_time) FROM cointron.training_data WHERE coin=%s", (coin,))
         return self.db_cursor.fetchone()[0]
 
-    def grab_training_data(self, coin, aggregation=15,
-                           start_time=binance.get_exchange_startime() + timedelta(minutes=15),
-                           end_time=(datetime.utcnow() - timedelta(minutes=15)).replace(tzinfo=pytz.UTC)):
-        cursor_time = start_time
+    def create_training_data_in_memory(self, coin, aggregation, start_time, end_time):
+        self.db_cursor.execute(
+            "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s  AND open_time <= %s ORDER BY open_time ASC",
+            (coin, start_time, end_time))
 
-        records_to_insert = []
+        df = pd.DataFrame(self.db_cursor.fetchall(), columns=self.get_binance_data_collumns())
+        num_workers = 5
+        training_data = []
 
-        batch_size = 5
-        worker_connections = [self.pool.getconn() for i in range(batch_size)]
-        worker_cursors = [conn.cursor() for conn in worker_connections]
+        for idx in range(0, df.shape[0], num_workers):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+                workers = []
+                for thread_idx in range(idx, min(idx + num_workers, df.shape[0])):
+                    if thread_idx + aggregation < df.shape[0] and thread_idx >= 10 * aggregation:
+                        workers.append(executor.submit(self.training_worker, coin, aggregation, df, thread_idx, True))
 
-        while cursor_time <= end_time:
+                for w in concurrent.futures.as_completed(workers):
+                    if w.result() is not None:
+                        training_data.append(w.result())
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
-                agg_futures = []
+                if len(training_data) > 5000 or idx + num_workers > df.shape[0]:
+                    print("Training data progress %2f %%" % ((idx / df.shape[0]) * 100))
 
-                for i in range(0, batch_size - 1):
-                    print("Create Training Data for %s (%s)" % (coin, cursor_time))
-                    agg_futures.append(executor.submit(self.training_data_worker, coin, aggregation, cursor_time,
-                                                       worker_cursors[i]))
-                    cursor_time += timedelta(minutes=1)
+                    insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(
+                        ['%s'] * len(training_data)) + " ON CONFLICT DO NOTHING"
+                    self.db_cursor.execute(insert_query, training_data)
+                    self.connection.commit()
+                    training_data.clear()
 
-                for future in concurrent.futures.as_completed(agg_futures):
-                    if future.result() is not None:
-                        records_to_insert.append(future.result())
+    def training_worker(self, coin, aggregation, df, idx, training):
+        agg_range = df.iloc[idx - aggregation:idx]
 
-            if len(records_to_insert) > 0:
-                print("Insert Training")
-                insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(['%s'] * len(records_to_insert))
-                self.db_cursor.execute(insert_query, records_to_insert)
-                self.connection.commit()
-                records_to_insert.clear()
+        open_value = agg_range['open_value'].iloc[0]
+        high = agg_range['high'].max()
+        low = agg_range['low'].min()
+        close_value = agg_range['close_value'].iloc[-1]
+        volume = agg_range['volume'].sum()
+        quote_asset_volume = agg_range['quote_asset_volume'].mean()
+        trades = int(agg_range['trades'].sum())
+        taker_buy_base_asset_volume = agg_range['taker_buy_base_asset_volume'].mean()
+        taker_buy_quote_asset_volume = agg_range['taker_buy_quote_asset_volume'].mean()
+        ma5 = df.iloc[idx - (5 * aggregation):idx]['close_value'].mean()
+        ma10 = df.iloc[idx - (10 * aggregation):idx]['close_value'].mean()
 
-        for i in range(batch_size):
-            worker_cursors[i].close()
-            self.pool.putconn(worker_connections[i])
+        if training:
+            prediction = df['open_value'].iloc[idx + aggregation]
+            prediction_delta = (prediction / close_value) - 1
 
-    def training_data_worker(self, coin, aggregation, cursor_time, cursor):
-        cursor.execute("SELECT open_value FROM cointron.binance_data WHERE coin=%s AND open_time=%s",
-                       (coin, cursor_time + timedelta(minutes=aggregation)))
-        prediction = cursor.fetchone()
-
-        if prediction is not None:
-
-            prediction = prediction[0]
-
-            cursor.execute(
-                "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
-                (coin, cursor_time - timedelta(minutes=aggregation), cursor_time))
-
-            df = pd.DataFrame(cursor.fetchall(), columns=['coin', 'open_time', 'open_value', 'high', 'low',
-                                                                 'close_value', 'volume', 'quote_asset_volume',
-                                                                 'trades',
-                                                                 'taker_buy_base_asset_volume',
-                                                                 'taker_buy_quote_asset_volume'])
-
-            if df.shape[0] > 0:
-                open_value = df['open_value'].iloc[0]
-                high = df['high'].max()
-                low = df['low'].min()
-                close_value = df['close_value'].iloc[-1]
-                volume = df['volume'].sum()
-                quote_asset_volume = df['quote_asset_volume'].mean()
-                trades = int(df['trades'].sum())
-                taker_buy_base_asset_volume = df['taker_buy_base_asset_volume'].mean()
-                taker_buy_quote_asset_volume = df['taker_buy_quote_asset_volume'].mean()
-                prediction_delta = (prediction / close_value) - 1
-
-                return (coin, aggregation, cursor_time, open_value, high, low, close_value, volume,
-                        quote_asset_volume, trades, taker_buy_base_asset_volume,
-                        taker_buy_quote_asset_volume,
-                        prediction_delta)
-            else:
-                print("No entries to aggregate")
-
+            return (coin, aggregation, df['open_time'].iloc[idx], open_value, high, low, close_value, volume,
+                    quote_asset_volume, trades, taker_buy_base_asset_volume, taker_buy_quote_asset_volume, ma5, ma10,
+                    prediction_delta)
         else:
-            print("No prediction at timestamp %s" % (cursor_time + timedelta(minutes=aggregation)))
+            return (open_value, high, low, close_value, volume, quote_asset_volume, trades, taker_buy_base_asset_volume,
+                    taker_buy_quote_asset_volume, ma5, ma10)
 
     def update_training_data(self):
+        aggregation = 15
+
         for coin in binance.get_coin_list():
             latest_data_timestamp = self.exchange_data_get_latest_timestamp(coin)
-            latest_timestamp = self.training_data_get_latest_timestamp(coin)
-            if latest_timestamp is None:
-                latest_timestamp = binance.get_exchange_startime()
-            print("Updating Training Data for %s from %s to %s" % (coin, latest_timestamp, latest_data_timestamp))
-            self.grab_training_data(coin, 15, latest_timestamp.replace(tzinfo=pytz.UTC) + timedelta(minutes=1),
-                                    latest_data_timestamp.replace(tzinfo=pytz.UTC) - timedelta(minutes=15))
+            latest_training_timestamp = self.training_data_get_latest_timestamp(coin)
+            if latest_training_timestamp is None:
+                print("Creating training data from scratch...")
+                latest_training_timestamp = binance.get_exchange_startime()
+            else:
+                print("Updating Training Data for %s from %s to %s" % (coin, latest_training_timestamp,
+                                                                       latest_data_timestamp))
+                latest_training_timestamp -= timedelta(minutes=aggregation * 10)
+            self.create_training_data_in_memory(coin, aggregation, latest_training_timestamp.replace(tzinfo=pytz.UTC),
+                                                latest_data_timestamp.replace(tzinfo=pytz.UTC))
 
     def get_training_data(self, coin, aggregation=15, start_time=binance.get_exchange_startime(),
                           end_time=datetime.utcnow().replace(tzinfo=pytz.UTC)):
         self.db_cursor.execute(
             "SELECT open_time,open_value,high,low,close_value,volume,quote_asset_volume,trades," +
-            "taker_buy_base_asset_volume,taker_buy_quote_asset_volume,prediction FROM cointron.training_data " +
+            "taker_buy_base_asset_volume,taker_buy_quote_asset_volume,ma5,ma10,prediction FROM cointron.training_data " +
             "WHERE coin=%s AND aggregation=%s AND open_time >= %s  AND open_time <= %s ORDER BY open_time ASC",
             (coin, aggregation, start_time, end_time))
 
         return pd.DataFrame(self.db_cursor.fetchall(), columns=['open_time', 'open_value', 'high', 'low', 'close_value',
                                                                 'volume', 'quote_asset_volume', 'trades',
                                                                 'taker_buy_base_asset_volume',
-                                                                'taker_buy_quote_asset_volume',
+                                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10',
                                                                 'prediction'])
 
     def get_latest_prediction_data(self, coin, aggregation):
-        timestamp = datetime.now(tz=pytz.UTC)
+        timestamp = self.exchange_data_get_latest_timestamp(coin)
+
         self.db_cursor.execute(
             "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
-            (coin, timestamp - timedelta(minutes=aggregation), timestamp))
+            (coin, timestamp - timedelta(minutes=10 * aggregation), timestamp))
 
-        df = pd.DataFrame(self.db_cursor.fetchall(), columns=['coin', 'open_time', 'open_value', 'high', 'low',
-                                                              'close_value', 'volume', 'quote_asset_volume',
-                                                              'trades', 'taker_buy_base_asset_volume',
-                                                              'taker_buy_quote_asset_volume'])
-        open_value = df['open_value'].iloc[0]
-        high = df['high'].max()
-        low = df['low'].min()
-        close_value = df['close_value'].iloc[-1]
-        volume = df['volume'].sum()
-        quote_asset_volume = df['quote_asset_volume'].mean()
-        trades = int(df['trades'].sum())
-        taker_buy_base_asset_volume = df['taker_buy_base_asset_volume'].mean()
-        taker_buy_quote_asset_volume = df['taker_buy_quote_asset_volume'].mean()
+        df = pd.DataFrame(self.db_cursor.fetchall(), columns=self.get_binance_data_collumns())
 
-        return pd.DataFrame([(open_value, high, low, close_value, volume, quote_asset_volume, trades,
-                              taker_buy_base_asset_volume, taker_buy_quote_asset_volume)],
-                            columns=['coin', 'open_time', 'open_value', 'high', 'low',
-                                     'close_value', 'volume', 'quote_asset_volume',
-                                     'trades', 'taker_buy_base_asset_volume',
-                                     'taker_buy_quote_asset_volume'])
+        return timestamp, pd.DataFrame([self.training_worker(coin, aggregation, df, df.shape[0] - 1, False)],
+                                       columns=['open_value', 'high', 'low', 'close_value', 'volume',
+                                                'quote_asset_volume',
+                                                'trades', 'taker_buy_base_asset_volume',
+                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
