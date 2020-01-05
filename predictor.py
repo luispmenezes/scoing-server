@@ -57,7 +57,6 @@ class Predictor:
         print("Done!")
 
         dataframe = pd.concat([dataframe_BTC, dataframe_ETH, dataframe_BNB])
-        dataframe = dataframe.sample(frac=1, axis=1).reset_index(drop=True)
 
         dataset = dataframe.values
         dataset = dataset.astype('float32')
@@ -98,7 +97,7 @@ class Predictor:
         model.add(LSTM(4, input_shape=(1, num_features)))
         model.add(Dense(1))
         model.compile(loss='mean_squared_error', optimizer='adam')
-        model.fit(x_train, y_train, epochs=25, verbose=2, validation_data=(x_validation, y_validation))
+        model.fit(x_train, y_train, epochs=10, verbose=2, validation_data=(x_validation, y_validation))
 
         self.save_model_files(model, scaler_X, scaler_Y)
 
@@ -113,3 +112,9 @@ class Predictor:
         prediction = self.model.predict(X, verbose=2)
         scaled_prediction = self.scaler_Y.inverse_transform(prediction)[0][0]
         return timestamp, scaled_prediction
+
+    def predict(self, data):
+        X = self.scaler_X.transform(data.values)
+        X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
+        raw_predictions = self.model.predict(X, verbose=2)
+        return self.scaler_Y.inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)

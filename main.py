@@ -38,13 +38,29 @@ def predictor_worker():
         p.model = p.train_model(15)
 
 
-
 @app.route('/predictor/latest/<string:coin>', methods=['GET'])
 def latest_prediction(coin):
     timestamp, prediction15 = p.get_latest_prediction(coin)
     predictions = {}
     predictions["15"] = str(prediction15)
     return jsonify({'timestamp': timestamp, 'predictions': predictions})
+
+
+@app.route('/predictor/predict', methods=['POST'])
+def predict():
+    pass
+
+
+@app.route('/collector/training/<string:coin>/<int:aggregation>', methods=['GET'])
+def training_data(coin, aggregation):
+    df = c.get_training_data(coin, aggregation)
+    return jsonify(df.values.tolist())
+
+
+@app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])
+def latest_data(coin, aggregation):
+    df = c.get_latest_prediction_data(coin, aggregation)
+    return jsonify(df.values.tolist())
 
 
 if __name__ == '__main__':
