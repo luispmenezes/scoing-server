@@ -3,7 +3,7 @@ from time import sleep
 
 from collector import Collector
 from predictor import Predictor
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 c = Collector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
               'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
@@ -16,20 +16,14 @@ app = Flask(__name__)
 
 def update_data_worker():
     while True:
-        try:
-            c.update_exchange_data()
-            sleep(10)
-        except:
-            print("Fodeu")
+        c.update_exchange_data()
+        sleep(10)
 
 
 def update_training_worker():
     while True:
-        try:
-            c.update_training_data()
-            sleep(120)
-        except:
-            print("Fodeu")
+        c.update_training_data()
+        sleep(120)
 
 
 def predictor_worker():
@@ -53,13 +47,15 @@ def predict():
 
 @app.route('/collector/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
-    df = c.get_training_data(coin, aggregation)
-    return jsonify(df.values.tolist())
+    timestamp, prediction15 = p.get_latest_prediction(coin)
+    predictions = {}
+    predictions["15"] = str(prediction15)
+    return jsonify({'timestamp': timestamp, 'predictions': predictions})
 
 
 @app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])
 def latest_data(coin, aggregation):
-    df = c.get_latest_prediction_data(coin, aggregation)
+    df = c.get_training_data(coin, aggregation)
     return jsonify(df.values.tolist())
 
 
