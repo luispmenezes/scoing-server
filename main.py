@@ -1,5 +1,9 @@
+from datetime import datetime
 from threading import Thread
 from time import sleep
+
+import pandas as pd
+import pytz
 
 from collector import Collector
 from predictor import Predictor
@@ -42,21 +46,24 @@ def latest_prediction(coin):
 
 @app.route('/predictor/predict', methods=['POST'])
 def predict():
-    pass
+    data = pd.DataFrame(request.json, columns=['open_value', 'high', 'low', 'close_value', 'volume',
+                                               'quote_asset_volume', 'trades', 'taker_buy_base_asset_volume',
+                                               'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
+    print(data)
+    prediction = p.predict(data)
+    return jsonify(prediction.tolist())
 
 
 @app.route('/collector/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
-    timestamp, prediction15 = p.get_latest_prediction(coin)
-    predictions = {}
-    predictions["15"] = str(prediction15)
-    return jsonify({'timestamp': timestamp, 'predictions': predictions})
+    return c.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
 
 
 @app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])
 def latest_data(coin, aggregation):
-    df = c.get_training_data(coin, aggregation)
-    return jsonify(df.values.tolist())
+    timestamp, df = c.get_latest_prediction_data(coin, aggregation)
+    # return jsonify({'timestamp': timestamp, 'data': df.to_json(orient="records")})
+    return df.to_json(orient="records")
 
 
 if __name__ == '__main__':
@@ -67,6 +74,6 @@ if __name__ == '__main__':
 
     update_data_thread.start()
     update_training_thread.start()
-    predictor_thread.start()
+    # predictor_thread.start()
 
     app.run(host='0.0.0.0', port=8989)

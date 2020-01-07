@@ -93,7 +93,7 @@ class Collector:
                     if w.result() is not None:
                         training_data.append(w.result())
 
-                if len(training_data) > 5000 or len(training_data) > 0 or idx + num_workers > df.shape[0]:
+                if (len(training_data) > 5000 or idx + num_workers > df.shape[0]) and len(training_data) > 0:
                     print("Training data progress %2f %%" % ((idx / df.shape[0]) * 100))
 
                     insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(
