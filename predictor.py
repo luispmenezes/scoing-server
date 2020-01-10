@@ -104,8 +104,9 @@ class Predictor:
         return model, scaler_X, scaler_Y
 
     def get_latest_prediction(self, coin):
-        timestamp, data = self.collector.get_latest_prediction_data(coin, 15)
-        X = data.values.reshape(1, -1)
+        data = self.collector.get_latest_prediction_data(coin, 15)
+        timestamp = data['open_time'].iloc[0]
+        X = data.iloc[:, 1:].values.reshape(1, -1)
         X = X.astype('float32')
         X = self.scaler_X.transform(X)
         X = X.reshape((1, 1, num_features))
@@ -114,7 +115,8 @@ class Predictor:
         return timestamp, scaled_prediction
 
     def predict(self, data):
-        X = self.scaler_X.transform(data.values)
+        timestamp = data['open_time'].iloc[0]
+        X = self.scaler_X.transform(data.iloc[:, 1:].values)
         X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
         raw_predictions = self.model.predict(X, verbose=2)
-        return self.scaler_Y.inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)
+        return timestamp, data.scaler_Y.inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)

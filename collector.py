@@ -8,6 +8,7 @@ import pytz
 
 import binance
 
+aggregations = {15, 60, 1440}
 
 class Collector:
 
@@ -51,7 +52,7 @@ class Collector:
                      float(data[9]), float(data[10])))
 
             if len(records_to_insert) > 0:
-                insert_query = "INSERT INTO cointron.binance_data VALUES" + ','.join(['%s'] * len(records_to_insert))
+                insert_query = "INSERT INTO cointron.binance_data VALUES" + ','.join(['%s'] * len(records_to_insert)) + " ON CONFLICT DO NOTHING"
                 self.db_cursor.execute(insert_query, records_to_insert)
                 self.connection.commit()
 
@@ -63,11 +64,11 @@ class Collector:
             if latest_timestamp is None:
                 latest_timestamp = binance.get_exchange_startime()
             else:
-                latest_timestamp = latest_timestamp.replace(tzinfo=pytz.UTC) + timedelta(minutes=1)
+                latest_timestamp = latest_timestamp.replace(tzinfo=pytz.UTC) - timedelta(minutes=1)
 
             print("Updating binance data from %s" % (latest_timestamp))
             self.grab_exchange_data(coin, latest_timestamp,
-                                    datetime.utcnow().replace(tzinfo=pytz.UTC) + timedelta(minutes=1))
+                                    datetime.utcnow().replace(tzinfo=pytz.UTC) - timedelta(minutes=1))
 
     def training_data_get_latest_timestamp(self, coin):
         self.db_cursor.execute("SELECT MAX(open_time) FROM cointron.training_data WHERE coin=%s", (coin,))
@@ -119,30 +120,30 @@ class Collector:
 
         if training:
             prediction = df['open_value'].iloc[idx + aggregation]
-            prediction_delta = (prediction / close_value) - 1
+            prediction_delta = (prediction / close_value) - 1.0
 
             return (coin, aggregation, df['open_time'].iloc[idx], open_value, high, low, close_value, volume,
                     quote_asset_volume, trades, taker_buy_base_asset_volume, taker_buy_quote_asset_volume, ma5, ma10,
                     prediction_delta)
         else:
-            return (open_value, high, low, close_value, volume, quote_asset_volume, trades, taker_buy_base_asset_volume,
-                    taker_buy_quote_asset_volume, ma5, ma10)
+            return (df['open_time'].iloc[idx], open_value, high, low, close_value, volume, quote_asset_volume, trades,
+                    taker_buy_base_asset_volume, taker_buy_quote_asset_volume, ma5, ma10)
 
     def update_training_data(self):
-        aggregation = 15
-
-        for coin in binance.get_coin_list():
-            latest_data_timestamp = self.exchange_data_get_latest_timestamp(coin)
-            latest_training_timestamp = self.training_data_get_latest_timestamp(coin)
-            if latest_training_timestamp is None:
-                print("Creating training data from scratch...")
-                latest_training_timestamp = binance.get_exchange_startime()
-            else:
-                print("Updating Training Data for %s from %s to %s" % (coin, latest_training_timestamp,
-                                                                       latest_data_timestamp))
-                latest_training_timestamp -= timedelta(minutes=aggregation * 10)
-            self.create_training_data_in_memory(coin, aggregation, latest_training_timestamp.replace(tzinfo=pytz.UTC),
-                                                latest_data_timestamp.replace(tzinfo=pytz.UTC))
+        for aggregation in aggregations:
+            for coin in binance.get_coin_list():
+                latest_data_timestamp = self.exchange_data_get_latest_timestamp(coin)
+                latest_training_timestamp = self.training_data_get_latest_timestamp(coin)
+                if latest_data_timestamp is not None:
+                    if latest_training_timestamp is None:
+                        print("Creating training data from scratch...")
+                        latest_training_timestamp = binance.get_exchange_startime()
+                    else:
+                        print("Updating Training Data for %s from %s to %s" % (coin, latest_training_timestamp,
+                                                                               latest_data_timestamp))
+                        latest_training_timestamp -= timedelta(minutes=aggregation * 10)
+                    self.create_training_data_in_memory(coin, aggregation, latest_training_timestamp.replace(tzinfo=pytz.UTC),
+                                                        latest_data_timestamp.replace(tzinfo=pytz.UTC))
 
     def get_training_data(self, coin, aggregation=15, start_time=binance.get_exchange_startime(),
                           end_time=datetime.utcnow().replace(tzinfo=pytz.UTC)):
@@ -167,8 +168,8 @@ class Collector:
 
         df = pd.DataFrame(self.db_cursor.fetchall(), columns=self.get_binance_data_collumns())
 
-        return timestamp, pd.DataFrame([self.training_worker(coin, aggregation, df, df.shape[0] - 1, False)],
-                                       columns=['open_value', 'high', 'low', 'close_value', 'volume',
-                                                'quote_asset_volume',
-                                                'trades', 'taker_buy_base_asset_volume',
-                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
+        return pd.DataFrame([self.training_worker(coin, aggregation, df, df.shape[0] - 1, False)],
+                            columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
+                                     'quote_asset_volume',
+                                     'trades', 'taker_buy_base_asset_volume',
+                                     'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
