@@ -1,6 +1,7 @@
 import pytz
 import requests
 import datetime
+import logging
 from enum import Enum
 
 
@@ -21,7 +22,7 @@ class Client:
 
     def send_request(self, method, path, params={}):
         headers = {'apiKey': self.api_key, 'secretKey': self.api_secret}
-        print('Sending binance request (%s %s %s)' % (method, self.ENDPOINT + path, params))
+        logging.debug('Sending binance request (%s %s %s)' % (method, self.ENDPOINT + path, params))
         response = requests.request(method, headers=headers, params=params, url=self.ENDPOINT + path)
         if response.status_code < 200 or response.status_code >= 300:
             raise Exception('Binance request failed %d (%s)' % (response.status_code, response.text))
@@ -32,7 +33,7 @@ class Client:
         return self.send_request('GET', self.PING_PATH)
 
     def klines(self, symbol, interval, start_time=None, end_time=None):
-        print('Get Klines (symbol:%s, interval:%s, start_time=%s, end_time=%s)' % (
+        logging.debug('Get Klines (symbol:%s, interval:%s, start_time=%s, end_time=%s)' % (
             symbol, interval, start_time, end_time))
         params = {'symbol': symbol, 'interval': interval, 'limit': 1000}
         if start_time is not None:

@@ -1,3 +1,4 @@
+import logging
 import os
 
 import pandas as pd
@@ -20,41 +21,55 @@ class Predictor:
 
     def __init__(self, collector):
         self.collector = collector
-        self.model, self.scaler_X, self.scaler_Y = self.load_model_files()
+        self.models, self.scalers_X, self.scalers_Y = self.load_model_files()
 
     def load_model_files(self):
-        try:
-            model_json = open(model_output_path + "/model.json", 'r')
-            loaded_model_json = model_json.read()
-            model_json.close()
+        temp_models = {}
+        temp_scalers_x = {}
+        temp_scalers_y = {}
 
-            model = model_from_json(loaded_model_json)
-            model.load_weights(model_output_path + "/model.h5")
+        for agg in self.collector.get_aggregations():
+            base_path = model_output_path + "/" + str(agg)
+            try:
+                model_json = open(base_path + "/model.json", 'r')
+                loaded_model_json = model_json.read()
+                model_json.close()
 
-            scaler_X = joblib.load(model_output_path + "/scaler_X.save")
-            scaler_Y = joblib.load(model_output_path + "/scaler_Y.save")
+                model = model_from_json(loaded_model_json)
+                model.load_weights(base_path + "/model.h5")
 
-            return model, scaler_X, scaler_Y
-        except:
-            return self.train_model(15)
+                scaler_x = joblib.load(base_path + "/scaler_X.save")
+                scaler_y = joblib.load(base_path + "/scaler_Y.save")
 
-    def save_model_files(self, model, scaler_X, scaler_Y):
-        if not os.path.exists(model_output_path):
-            os.mkdir(model_output_path)
+                temp_models[agg] = model
+                temp_scalers_x[agg] = scaler_x
+                temp_scalers_y[agg] = scaler_y
+            except Exception:
+                temp_models[agg], temp_scalers_x[agg], temp_scalers_y[agg] = self.train_model(agg)
+
+            return temp_models, temp_scalers_x, temp_scalers_y
+
+    def save_model_files(self, aggregation, model, scaler_X, scaler_Y):
+        base_path = model_output_path + "/" + str(aggregation)
+
+        if not os.path.exists(base_path):
+            os.mkdir(base_path)
 
         model_json = model.to_json()
-        with open(model_output_path + "/model.json", "w") as json_file:
+        with open(base_path + "/model.json", "w") as json_file:
             json_file.write(model_json)
-        model.save_weights(model_output_path + "/model.h5")
-        joblib.dump(scaler_X, model_output_path + "/scaler_X.save")
-        joblib.dump(scaler_Y, model_output_path + "/scaler_Y.save")
+        model.save_weights(base_path + "/model.h5")
+        joblib.dump(scaler_X, base_path + "/scaler_X.save")
+        joblib.dump(scaler_Y, base_path + "/scaler_Y.save")
 
     def train_model(self, aggregation):
-        print("Getting dataframes...")
+        logging.info("Training %d model" % (aggregation))
         dataframe_BTC = self.collector.get_training_data("BTCUSDT", aggregation)[csv_collumns]
+        logging.debug("BTC dataframe recieved")
         dataframe_ETH = self.collector.get_training_data("ETHUSDT", aggregation)[csv_collumns]
+        logging.debug("ETH dataframe recieved")
         dataframe_BNB = self.collector.get_training_data("BNBUSDT", aggregation)[csv_collumns]
-        print("Done!")
+        logging.info("Done!")
 
         dataframe = pd.concat([dataframe_BTC, dataframe_ETH, dataframe_BNB])
 
@@ -97,26 +112,37 @@ class Predictor:
         model.add(LSTM(4, input_shape=(1, num_features)))
         model.add(Dense(1))
         model.compile(loss='mean_squared_error', optimizer='adam')
-        model.fit(x_train, y_train, epochs=10, verbose=2, validation_data=(x_validation, y_validation))
+        model.fit(x_train, y_train, epochs=25, verbose=2, validation_data=(x_validation, y_validation))
 
-        self.save_model_files(model, scaler_X, scaler_Y)
+        self.save_model_files(aggregation, model, scaler_X, scaler_Y)
 
         return model, scaler_X, scaler_Y
 
     def get_latest_prediction(self, coin):
-        data = self.collector.get_latest_prediction_data(coin, 15)
-        timestamp = data['open_time'].iloc[0]
-        X = data.iloc[:, 1:].values.reshape(1, -1)
-        X = X.astype('float32')
-        X = self.scaler_X.transform(X)
-        X = X.reshape((1, 1, num_features))
-        prediction = self.model.predict(X, verbose=2)
-        scaled_prediction = self.scaler_Y.inverse_transform(prediction)[0][0]
-        return timestamp, scaled_prediction
+        predictions = {}
+
+        for agg in self.collector.get_aggregations():
+            data = self.collector.get_latest_prediction_data(coin, agg)
+            timestamp = data['open_time'].iloc[0]
+            X = data.iloc[:, 1:].values.reshape(1, -1)
+            X = X.astype('float32')
+            X = self.scaler_X[agg].transform(X)
+            X = X.reshape((1, 1, num_features))
+            prediction = self.model[agg].predict(X, verbose=2)
+            scaled_prediction = self.scaler_Y[agg].inverse_transform(prediction)[0][0]
+            predictions[agg] = scaled_prediction
+
+        return timestamp, predictions
 
     def predict(self, data):
-        timestamp = data['open_time'].iloc[0]
-        X = self.scaler_X.transform(data.iloc[:, 1:].values)
-        X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
-        raw_predictions = self.model.predict(X, verbose=2)
-        return timestamp, data.scaler_Y.inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)
+        predictions = {}
+
+        for agg in self.collector.get_aggregations():
+            timestamp = data['open_time'].iloc[0]
+            X = self.scaler_X.transform(data.iloc[:, 1:].values)
+            X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
+            raw_predictions = self.model.predict(X, verbose=2)
+            scaled_prediction = data.scaler_Y.inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)
+            predictions[agg] = scaled_prediction
+
+        return timestamp, predictions

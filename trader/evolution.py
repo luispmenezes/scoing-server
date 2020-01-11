@@ -1,4 +1,5 @@
 import concurrent.futures
+import logging
 from random import random
 
 import numpy as np
@@ -40,7 +41,7 @@ class Evolution:
             if best_candidates is None or candidates[0].fitness > best_candidates[0].fitness:
                 best_candidates = candidates
 
-            print('Generation %d Fitness: %f' % (gen, best_candidates[0].fitness))
+            logging.info('Generation %d Fitness: %f' % (gen, best_candidates[0].fitness))
             specimens = self.breed(best_candidates)
 
         return best_candidates[0]

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from threading import Thread
 from time import sleep
@@ -12,16 +13,21 @@ from flask import Flask, jsonify, request
 c = Collector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
               'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
               'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C')
+#p = Predictor(c)
 
-p = Predictor(c)
+log_format = '[%(asctime)s] [%(levelname)s] - %(message)s'
+logging.basicConfig(level=logging.DEBUG, format=log_format)
 
 app = Flask(__name__)
 
 
 def update_data_worker():
     while True:
-        c.update_exchange_data()
-        sleep(10)
+        try:
+            c.update_exchange_data()
+            sleep(10)
+        except ConnectionError as ce:
+            logging.info("Connection to binance api failed ", ce)
 
 
 def update_training_worker():
@@ -49,7 +55,7 @@ def predict():
     data = pd.DataFrame(request.json, columns=['open_value', 'high', 'low', 'close_value', 'volume',
                                                'quote_asset_volume', 'trades', 'taker_buy_base_asset_volume',
                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
-    print(data)
+    logging.info(data)
     prediction = p.predict(data)
     return jsonify(prediction.tolist())
 
@@ -67,7 +73,7 @@ def latest_data(coin, aggregation):
 
 
 if __name__ == '__main__':
-    print("Startup completed")
+    logging.info("Startup completed")
     update_data_thread = Thread(target=update_data_worker)
     update_training_thread = Thread(target=update_training_worker)
     predictor_thread = Thread(target=predictor_worker)

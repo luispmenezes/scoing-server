@@ -1,3 +1,4 @@
+import logging
 import random
 
 from trader.simulated_wallet import SimulatedWallet
@@ -31,12 +32,12 @@ class TraderSimulation:
         self.trader = Trader(config, wallet, predictor)
 
     def run(self):
-        print("Simulation Started")
+        logging.info("Simulation Started")
         for i in range(0, self.data[list(self.data.keys())[0]].shape[0]):
             for coin in self.data.keys():
                 self.trader.process_data(coin, self.data[coin].iloc[i])
                 if i % 10000 == 0:
-                    print("Simulation Progress %f%%" % ((i/self.data[coin].shape[0])*100))
+                    logging.info("Simulation Progress %f%%" % ((i/self.data[coin].shape[0])*100))
 
-        print("Simulation Ended")
+        logging.info("Simulation Ended")
         return self.trader.wallet.get_net_worth()

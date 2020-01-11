@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 
 from trader.evolution import Evolution
@@ -37,7 +39,7 @@ class TraderSchool:
 
         simulation = TraderSimulation(data, predictions, trader_conf, 1000, 0.001, 0)
 
-        print(simulation.run())
+        logging.info(simulation.run())
 
     def run_evolution(self, init_balance, fee, uncertainty, generation_size, num_generations, mutation_rate,
                       real_predictions):

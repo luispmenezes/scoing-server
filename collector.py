@@ -1,14 +1,16 @@
 import concurrent.futures
+import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
 import psycopg2
-from psycopg2 import pool
 import pytz
+from psycopg2 import pool
 
 import binance
 
-aggregations = {15, 60, 1440}
+aggregations = {15,60, 1440}
+
 
 class Collector:
 
@@ -19,19 +21,30 @@ class Collector:
                                                              host=db_host,
                                                              port=db_port,
                                                              database=db_name)
-            self.connection = self.pool.getconn()
-            self.db_cursor = self.connection.cursor()
+            self.data_conn = self.pool.getconn()
+            self.data_cursor = self.data_conn.cursor()
+            self.training_conn = self.pool.getconn()
+            self.training_cursor = self.training_conn.cursor()
             self.binance_client = binance.Client(binance_api_key, binance_api_secret)
         except (Exception, psycopg2.Error) as error:
-            print("Error establishing db connection", error)
+            logging.info("Error establishing db connection", error)
 
     def get_binance_data_collumns(self):
         return ['coin', 'open_time', 'open_value', 'high', 'low', 'close_value', 'volume', 'quote_asset_volume',
                 'trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume']
 
     def exchange_data_get_latest_timestamp(self, coin):
-        self.db_cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
-        return self.db_cursor.fetchone()[0]
+        timestamp = None
+        while timestamp is None:
+            try:
+                self.data_cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
+            except Exception:
+                logging.info("Failed getting latest training timestamp")
+            else:
+                result = self.data_cursor.fetchone()
+                if result is not None:
+                    timestamp = self.data_cursor.fetchone()[0]
+        return timestamp
 
     def grab_exchange_data(self, coin, start_time=binance.get_exchange_startime(),
                            end_time=datetime.utcnow().replace(tzinfo=pytz.UTC)):
@@ -42,7 +55,7 @@ class Collector:
             if loop_end_time > end_time:
                 loop_end_time = end_time
 
-            print('Getting binance data for %s to %s' % (loop_start_time, loop_end_time))
+            logging.info('Getting binance data for %s to %s' % (loop_start_time, loop_end_time))
 
             records_to_insert = []
             for data in self.binance_client.klines(coin, "1m", loop_start_time, loop_end_time):
@@ -52,9 +65,15 @@ class Collector:
                      float(data[9]), float(data[10])))
 
             if len(records_to_insert) > 0:
-                insert_query = "INSERT INTO cointron.binance_data VALUES" + ','.join(['%s'] * len(records_to_insert)) + " ON CONFLICT DO NOTHING"
-                self.db_cursor.execute(insert_query, records_to_insert)
-                self.connection.commit()
+                insert_query = "INSERT INTO cointron.binance_data VALUES" + ','.join(
+                    ['%s'] * len(records_to_insert)) + " ON CONFLICT DO NOTHING"
+                try:
+                    self.data_cursor.execute(insert_query, records_to_insert)
+                except Exception as e:
+                    logging.info("Exchange data insert failed ", e)
+                    self.data_conn.rollback()
+                else:
+                    self.data_conn.commit()
 
             loop_start_time += timedelta(days=5)
 
@@ -66,20 +85,21 @@ class Collector:
             else:
                 latest_timestamp = latest_timestamp.replace(tzinfo=pytz.UTC) - timedelta(minutes=1)
 
-            print("Updating binance data from %s" % (latest_timestamp))
+            logging.info("Updating binance data from %s" % (latest_timestamp))
             self.grab_exchange_data(coin, latest_timestamp,
                                     datetime.utcnow().replace(tzinfo=pytz.UTC) - timedelta(minutes=1))
 
-    def training_data_get_latest_timestamp(self, coin):
-        self.db_cursor.execute("SELECT MAX(open_time) FROM cointron.training_data WHERE coin=%s", (coin,))
-        return self.db_cursor.fetchone()[0]
+    def training_data_get_latest_timestamp(self, coin, aggregation):
+        self.training_cursor.execute(
+            "SELECT MAX(open_time) FROM cointron.training_data WHERE coin=%s AND aggregation=%s", (coin, aggregation))
+        return self.training_cursor.fetchone()[0]
 
     def create_training_data_in_memory(self, coin, aggregation, start_time, end_time):
-        self.db_cursor.execute(
+        self.training_cursor.execute(
             "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s  AND open_time <= %s ORDER BY open_time ASC",
             (coin, start_time, end_time))
 
-        df = pd.DataFrame(self.db_cursor.fetchall(), columns=self.get_binance_data_collumns())
+        df = pd.DataFrame(self.training_cursor.fetchall(), columns=self.get_binance_data_collumns())
         num_workers = 5
         training_data = []
 
@@ -95,15 +115,23 @@ class Collector:
                         training_data.append(w.result())
 
                 if (len(training_data) > 5000 or idx + num_workers > df.shape[0]) and len(training_data) > 0:
-                    print("Training data progress %2f %%" % ((idx / df.shape[0]) * 100))
+                    logging.info(
+                        "Training data(%s,%d) progress %2f %%" % (coin, aggregation, (idx / df.shape[0]) * 100))
 
                     insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(
                         ['%s'] * len(training_data)) + " ON CONFLICT DO NOTHING"
-                    self.db_cursor.execute(insert_query, training_data)
-                    self.connection.commit()
-                    training_data.clear()
+                    try:
+                        self.training_cursor.execute(insert_query, training_data)
+                    except Exception as e:
+                        logging.info("Failed to insert training data ", e)
+                        self.training_conn.rollback()
+                        return
+                    else:
+                        self.training_conn.commit()
+                        training_data.clear()
 
-    def training_worker(self, coin, aggregation, df, idx, training):
+    @staticmethod
+    def training_worker(coin, aggregation, df, idx, training):
         agg_range = df.iloc[idx - aggregation:idx]
 
         open_value = agg_range['open_value'].iloc[0]
@@ -133,43 +161,50 @@ class Collector:
         for aggregation in aggregations:
             for coin in binance.get_coin_list():
                 latest_data_timestamp = self.exchange_data_get_latest_timestamp(coin)
-                latest_training_timestamp = self.training_data_get_latest_timestamp(coin)
+                latest_training_timestamp = self.training_data_get_latest_timestamp(coin, aggregation)
                 if latest_data_timestamp is not None:
                     if latest_training_timestamp is None:
-                        print("Creating training data from scratch...")
+                        logging.info("Creating training data from scratch (%s,%d)..." % (coin, aggregation))
                         latest_training_timestamp = binance.get_exchange_startime()
                     else:
-                        print("Updating Training Data for %s from %s to %s" % (coin, latest_training_timestamp,
-                                                                               latest_data_timestamp))
+                        logging.info("Updating Training Data for %s,%d from %s to %s" % (
+                            coin, aggregation, latest_training_timestamp,
+                            latest_data_timestamp))
                         latest_training_timestamp -= timedelta(minutes=aggregation * 10)
-                    self.create_training_data_in_memory(coin, aggregation, latest_training_timestamp.replace(tzinfo=pytz.UTC),
+                    self.create_training_data_in_memory(coin, aggregation,
+                                                        latest_training_timestamp.replace(tzinfo=pytz.UTC),
                                                         latest_data_timestamp.replace(tzinfo=pytz.UTC))
 
     def get_training_data(self, coin, aggregation=15, start_time=binance.get_exchange_startime(),
                           end_time=datetime.utcnow().replace(tzinfo=pytz.UTC)):
-        self.db_cursor.execute(
+        self.training_cursor.execute(
             "SELECT open_time,open_value,high,low,close_value,volume,quote_asset_volume,trades," +
             "taker_buy_base_asset_volume,taker_buy_quote_asset_volume,ma5,ma10,prediction FROM cointron.training_data " +
             "WHERE coin=%s AND aggregation=%s AND open_time >= %s  AND open_time <= %s ORDER BY open_time ASC",
             (coin, aggregation, start_time, end_time))
 
-        return pd.DataFrame(self.db_cursor.fetchall(), columns=['open_time', 'open_value', 'high', 'low', 'close_value',
-                                                                'volume', 'quote_asset_volume', 'trades',
-                                                                'taker_buy_base_asset_volume',
-                                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10',
-                                                                'prediction'])
+        return pd.DataFrame(self.training_cursor.fetchall(),
+                            columns=['open_time', 'open_value', 'high', 'low', 'close_value',
+                                     'volume', 'quote_asset_volume', 'trades',
+                                     'taker_buy_base_asset_volume',
+                                     'taker_buy_quote_asset_volume', 'ma5', 'ma10',
+                                     'prediction'])
 
     def get_latest_prediction_data(self, coin, aggregation):
         timestamp = self.exchange_data_get_latest_timestamp(coin)
 
-        self.db_cursor.execute(
+        self.data_cursor.execute(
             "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
             (coin, timestamp - timedelta(minutes=10 * aggregation), timestamp))
 
-        df = pd.DataFrame(self.db_cursor.fetchall(), columns=self.get_binance_data_collumns())
+        df = pd.DataFrame(self.data_cursor.fetchall(), columns=self.get_binance_data_collumns())
 
         return pd.DataFrame([self.training_worker(coin, aggregation, df, df.shape[0] - 1, False)],
                             columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
                                      'quote_asset_volume',
                                      'trades', 'taker_buy_base_asset_volume',
                                      'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
+
+    @staticmethod
+    def get_aggregations():
+        return aggregations
