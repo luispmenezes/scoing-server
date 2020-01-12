@@ -1,5 +1,4 @@
 import concurrent.futures
-import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -9,12 +8,12 @@ from psycopg2 import pool
 
 import binance
 
-aggregations = {15,60, 1440}
+aggregations = {15, 60, 1440}
 
 
 class Collector:
 
-    def __init__(self, db_host, db_port, db_name, db_user, db_password, binance_api_key, binance_api_secret):
+    def __init__(self, db_host, db_port, db_name, db_user, db_password, binance_api_key, binance_api_secret, logger):
         try:
             self.pool = psycopg2.pool.ThreadedConnectionPool(1, 20, user=db_user,
                                                              password=db_password,
@@ -26,8 +25,9 @@ class Collector:
             self.training_conn = self.pool.getconn()
             self.training_cursor = self.training_conn.cursor()
             self.binance_client = binance.Client(binance_api_key, binance_api_secret)
+            self.logger = logger
         except (Exception, psycopg2.Error) as error:
-            logging.info("Error establishing db connection", error)
+            self.logger.info("Error establishing db connection", error)
 
     def get_binance_data_collumns(self):
         return ['coin', 'open_time', 'open_value', 'high', 'low', 'close_value', 'volume', 'quote_asset_volume',
@@ -38,12 +38,13 @@ class Collector:
         while timestamp is None:
             try:
                 self.data_cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
-            except Exception:
-                logging.info("Failed getting latest training timestamp")
+            except Exception as e:
+                self.logger.info("Failed getting latest training timestamp")
+                self.logger.debug(e)
             else:
                 result = self.data_cursor.fetchone()
                 if result is not None:
-                    timestamp = self.data_cursor.fetchone()[0]
+                    timestamp = result[0]
         return timestamp
 
     def grab_exchange_data(self, coin, start_time=binance.get_exchange_startime(),
@@ -55,7 +56,7 @@ class Collector:
             if loop_end_time > end_time:
                 loop_end_time = end_time
 
-            logging.info('Getting binance data for %s to %s' % (loop_start_time, loop_end_time))
+            self.logger.info('Getting binance data for %s to %s' % (loop_start_time, loop_end_time))
 
             records_to_insert = []
             for data in self.binance_client.klines(coin, "1m", loop_start_time, loop_end_time):
@@ -70,7 +71,7 @@ class Collector:
                 try:
                     self.data_cursor.execute(insert_query, records_to_insert)
                 except Exception as e:
-                    logging.info("Exchange data insert failed ", e)
+                    self.logger.info("Exchange data insert failed ", e)
                     self.data_conn.rollback()
                 else:
                     self.data_conn.commit()
@@ -85,7 +86,7 @@ class Collector:
             else:
                 latest_timestamp = latest_timestamp.replace(tzinfo=pytz.UTC) - timedelta(minutes=1)
 
-            logging.info("Updating binance data from %s" % (latest_timestamp))
+            self.logger.info("Updating binance data from %s" % (latest_timestamp))
             self.grab_exchange_data(coin, latest_timestamp,
                                     datetime.utcnow().replace(tzinfo=pytz.UTC) - timedelta(minutes=1))
 
@@ -115,7 +116,7 @@ class Collector:
                         training_data.append(w.result())
 
                 if (len(training_data) > 5000 or idx + num_workers > df.shape[0]) and len(training_data) > 0:
-                    logging.info(
+                    self.logger.info(
                         "Training data(%s,%d) progress %2f %%" % (coin, aggregation, (idx / df.shape[0]) * 100))
 
                     insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(
@@ -123,7 +124,7 @@ class Collector:
                     try:
                         self.training_cursor.execute(insert_query, training_data)
                     except Exception as e:
-                        logging.info("Failed to insert training data ", e)
+                        self.logger.info("Failed to insert training data ", e)
                         self.training_conn.rollback()
                         return
                     else:
@@ -164,10 +165,10 @@ class Collector:
                 latest_training_timestamp = self.training_data_get_latest_timestamp(coin, aggregation)
                 if latest_data_timestamp is not None:
                     if latest_training_timestamp is None:
-                        logging.info("Creating training data from scratch (%s,%d)..." % (coin, aggregation))
+                        self.logger.info("Creating training data from scratch (%s,%d)..." % (coin, aggregation))
                         latest_training_timestamp = binance.get_exchange_startime()
                     else:
-                        logging.info("Updating Training Data for %s,%d from %s to %s" % (
+                        self.logger.info("Updating Training Data for %s,%d from %s to %s" % (
                             coin, aggregation, latest_training_timestamp,
                             latest_data_timestamp))
                         latest_training_timestamp -= timedelta(minutes=aggregation * 10)

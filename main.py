@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 from threading import Thread
@@ -10,13 +11,14 @@ from collector import Collector
 from predictor import Predictor
 from flask import Flask, jsonify, request
 
+log_format = '[%(asctime)s] [%(levelname)s] - %(name)s: %(message)s'
+logging.basicConfig(level=logging.DEBUG, format=log_format)
+logger = logging.getLogger("Main")
+
 c = Collector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
               'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
-              'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C')
-#p = Predictor(c)
-
-log_format = '[%(asctime)s] [%(levelname)s] - %(message)s'
-logging.basicConfig(level=logging.DEBUG, format=log_format)
+              'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C', logging.getLogger("Collector"))
+p = Predictor(c, logging.getLogger("Predictor"))
 
 app = Flask(__name__)
 
@@ -26,8 +28,9 @@ def update_data_worker():
         try:
             c.update_exchange_data()
             sleep(10)
-        except ConnectionError as ce:
-            logging.info("Connection to binance api failed ", ce)
+        except Exception as e:
+            logger.info("Connection to binance api failed ", e)
+            sleep(60)
 
 
 def update_training_worker():
@@ -44,20 +47,24 @@ def predictor_worker():
 
 @app.route('/predictor/latest/<string:coin>', methods=['GET'])
 def latest_prediction(coin):
-    timestamp, prediction15 = p.get_latest_prediction(coin)
-    predictions = {}
-    predictions["15"] = str(prediction15)
+    timestamp, predictions = p.get_latest_prediction(coin)
+    for key in predictions.keys():
+        predictions[key] = str(predictions[key])
+
     return jsonify({'timestamp': timestamp, 'predictions': predictions})
 
 
 @app.route('/predictor/predict', methods=['POST'])
 def predict():
-    data = pd.DataFrame(request.json, columns=['open_value', 'high', 'low', 'close_value', 'volume',
+    data = pd.DataFrame(request.json, columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
                                                'quote_asset_volume', 'trades', 'taker_buy_base_asset_volume',
                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
-    logging.info(data)
-    prediction = p.predict(data)
-    return jsonify(prediction.tolist())
+    logger.info(data)
+    epoch_ms, predictions = p.predict(data)
+    for key in predictions.keys():
+        predictions[key] = str(predictions[key])
+
+    return jsonify({'timestamp': datetime.fromtimestamp((epoch_ms / 1000.0)), 'predictions': predictions})
 
 
 @app.route('/collector/training/<string:coin>/<int:aggregation>', methods=['GET'])
@@ -67,7 +74,7 @@ def training_data(coin, aggregation):
 
 @app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])
 def latest_data(coin, aggregation):
-    timestamp, df = c.get_latest_prediction_data(coin, aggregation)
+    df = c.get_latest_prediction_data(coin, aggregation)
     # return jsonify({'timestamp': timestamp, 'data': df.to_json(orient="records")})
     return df.to_json(orient="records")
 
