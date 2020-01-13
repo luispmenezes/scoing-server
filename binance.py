@@ -27,8 +27,7 @@ class Client:
         if response.status_code < 200 or response.status_code >= 300:
             raise Exception('Binance request failed %d (%s)' % (response.status_code, response.text))
         else:
-            logging.info("Request to binance failed :%d" % (response.status_code))
-            return (response.status_code, response.json())
+            return response.status_code, response.json()
 
     def ping(self):
         return self.send_request('GET', self.PING_PATH)

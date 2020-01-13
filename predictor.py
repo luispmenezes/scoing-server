@@ -15,10 +15,11 @@ num_features = len(csv_collumns) - 1
 
 model_output_path = "./model"
 
+
 class Predictor:
 
-    def __init__(self, collector,logger):
-        self.collector = collector
+    def __init__(self, aggregator, logger):
+        self.aggregator = aggregator
         self.logger = logger
         self.models, self.scalers_x, self.scalers_y = self.load_model_files()
 
@@ -27,7 +28,7 @@ class Predictor:
         temp_scalers_x = {}
         temp_scalers_y = {}
 
-        for agg in self.collector.get_aggregations():
+        for agg in self.aggregator.get_aggregations():
             base_path = model_output_path + "/" + str(agg)
             try:
                 model_json = open(base_path + "/model.json", 'r')
@@ -63,11 +64,11 @@ class Predictor:
 
     def train_model(self, aggregation):
         self.logger.info("Training %d model" % (aggregation))
-        dataframe_BTC = self.collector.get_training_data("BTCUSDT", aggregation)[csv_collumns]
+        dataframe_BTC = self.aggregator.get_training_data("BTCUSDT", aggregation)[csv_collumns]
         self.logger.debug("BTC dataframe recieved")
-        dataframe_ETH = self.collector.get_training_data("ETHUSDT", aggregation)[csv_collumns]
+        dataframe_ETH = self.aggregator.get_training_data("ETHUSDT", aggregation)[csv_collumns]
         self.logger.debug("ETH dataframe recieved")
-        dataframe_BNB = self.collector.get_training_data("BNBUSDT", aggregation)[csv_collumns]
+        dataframe_BNB = self.aggregator.get_training_data("BNBUSDT", aggregation)[csv_collumns]
         self.logger.info("Done!")
 
         dataframe = pd.concat([dataframe_BTC, dataframe_ETH, dataframe_BNB])
@@ -121,8 +122,8 @@ class Predictor:
         predictions = {}
         timestamp = 0
 
-        for agg in self.collector.get_aggregations():
-            data = self.collector.get_latest_prediction_data(coin, agg)
+        for agg in self.aggregator.get_aggregations():
+            data = self.aggregator.get_latest_prediction_data(coin, agg)
             timestamp = data['open_time'].iloc[0]
             data_x = data.iloc[:, 1:].values.reshape(1, -1)
             data_x = data_x.astype('float32')
@@ -136,14 +137,19 @@ class Predictor:
 
     def predict(self, data):
         predictions = {}
-        timestamp = 0
+        result = []
 
-        for agg in self.collector.get_aggregations():
-            timestamp = data['open_time'].iloc[0]
+        for agg in self.aggregator.get_aggregations():
             data_x = self.scalers_x[agg].transform(data.iloc[:, 1:].values)
             data_x = np.reshape(data_x, (data_x.shape[0], 1, data_x.shape[1]))
             raw_predictions = self.models[agg].predict(data_x, verbose=2)
             scaled_prediction = self.scalers_y[agg].inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)
             predictions[agg] = scaled_prediction
 
-        return timestamp, predictions
+        for i in range(data.shape[0]):
+            entry = {}
+            for agg in self.aggregator.get_aggregations():
+                entry[agg] = predictions[agg][i]
+            result.append({"timestamp": data['open_time'].iloc[i], "prediction": entry})
+
+        return result
