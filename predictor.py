@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -135,21 +136,20 @@ class Predictor:
 
         return timestamp, predictions
 
-    def predict(self, data):
-        predictions = {}
-        result = []
+    def predict(self, data, agg):
+        result = {}
 
-        for agg in self.aggregator.get_aggregations():
-            data_x = self.scalers_x[agg].transform(data.iloc[:, 1:].values)
-            data_x = np.reshape(data_x, (data_x.shape[0], 1, data_x.shape[1]))
-            raw_predictions = self.models[agg].predict(data_x, verbose=2)
-            scaled_prediction = self.scalers_y[agg].inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)
-            predictions[agg] = scaled_prediction
+        data_x = self.scalers_x[agg].transform(data.iloc[:, 1:].values)
+        data_x = np.reshape(data_x, (data_x.shape[0], 1, data_x.shape[1]))
+        raw_predictions = self.models[agg].predict(data_x, verbose=2)
+        scaled_prediction = self.scalers_y[agg].inverse_transform(raw_predictions.reshape(-1, 1)).reshape(-1)
 
         for i in range(data.shape[0]):
-            entry = {}
-            for agg in self.aggregator.get_aggregations():
-                entry[agg] = predictions[agg][i]
-            result.append({"timestamp": data['open_time'].iloc[i], "prediction": entry})
+            ts = data['open_time'].iloc[i]
+
+            if isinstance(ts, np.int64):
+                ts = datetime.fromtimestamp((ts / 1000.0)).strftime("%Y/%m/%d %H:%M:%S")
+
+            result[ts] = scaled_prediction[i]
 
         return result

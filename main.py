@@ -8,6 +8,7 @@ import pytz
 from flask import Flask, jsonify, request
 
 from aggregator import Aggregator
+from binance import get_coin_list
 from collector import Collector
 from predictor import Predictor
 
@@ -63,32 +64,35 @@ def latest_prediction(coin):
     return jsonify({'timestamp': timestamp, 'predictions': predictions})
 
 
-@app.route('/predictor/predict', methods=['POST'])
-def predict():
+@app.route('/predictor/predict/<int:aggregation>', methods=['POST'])
+def predict(aggregation):
     data = pd.DataFrame(request.json, columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
                                                'quote_asset_volume', 'trades', 'taker_buy_base_asset_volume',
                                                'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
     logger.info(data)
-    predictions = predictor.predict(data)
-    str_list = []
-    for pred_entry in predictions:
-        str_entry = {"prediction": {}}
-        for agg in pred_entry["prediction"].keys():
-            str_entry["prediction"][agg] = str(pred_entry["prediction"][agg])
+    predictions = predictor.predict(data, aggregation)
+    for ts in predictions:
+        predictions[ts] = str(predictions[ts])
 
-        if isinstance(pred_entry["timestamp"], str):
-            str_entry["timestamp"] = pred_entry["timestamp"]
-        else:
-            str_entry["timestamp"] = datetime.fromtimestamp((pred_entry["timestamp"] / 1000.0)).strftime(
-                "%Y/%m/%d %H:%M:%S")
-        str_list.append(str_entry)
-
-    return jsonify({'predictions': str_list})
+    return jsonify(predictions)
 
 
-@app.route('/collector/training/<string:coin>/<int:aggregation>', methods=['GET'])
+@app.route('/aggregator/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
     return aggregator.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
+
+
+@app.route('/aggregator/trader/<string:coin>', methods=['GET'])
+def trader_training(coin):
+    coins = (coin,)
+    if coin == "*":
+        coins = tuple(Collector.coin_list())
+
+    start_time = datetime.fromtimestamp(int(request.headers['start_time'])).strftime("%Y/%m/%d %H:%M:%S")
+    end_time = datetime.fromtimestamp(int(request.headers['end_time'])).strftime("%Y/%m/%d %H:%M:%S")
+
+    df = aggregator.trader_training_data(coins, start_time, end_time)
+    return df.to_json(orient="records")
 
 
 @app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])

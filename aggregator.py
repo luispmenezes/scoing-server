@@ -167,3 +167,23 @@ class Aggregator:
     @staticmethod
     def get_aggregations():
         return aggregation_list
+
+    def trader_training_data(self, coins, start_time, end_time):
+        result = None
+
+        for agg in Aggregator.get_aggregations():
+            if result is None:
+                self.cursor.execute(
+                    "SELECT to_char(current_timestamp, 'FXYYYY-MM-DD\"T\"HH:MI:SS\"Z00:00\"'),coin,open_value,prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
+                    (coins, start_time, end_time, agg))
+
+                result = pd.DataFrame(self.cursor.fetchall(),
+                                      columns=['open_time', 'coin', 'open_value', 'pred_' + str(agg)])
+            else:
+                self.cursor.execute(
+                    "SELECT prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
+                    (coins, start_time, end_time, agg))
+
+                result['pred_' + str(agg)] = pd.DataFrame(self.cursor.fetchall())
+
+        return result

@@ -92,3 +92,7 @@ class Collector:
             self.logger.info("Updating binance data from %s" % latest_timestamp)
             self.grab_exchange_data(coin, latest_timestamp,
                                     datetime.utcnow().replace(tzinfo=pytz.UTC) - timedelta(minutes=1))
+
+    @staticmethod
+    def coin_list():
+        return binance.get_coin_list()
