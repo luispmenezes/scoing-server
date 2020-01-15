@@ -3,6 +3,7 @@ from datetime import datetime
 from threading import Thread
 from time import sleep
 
+import flask
 import pandas as pd
 import pytz
 from flask import Flask, jsonify, request
@@ -79,7 +80,10 @@ def predict(aggregation):
 
 @app.route('/aggregator/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
-    return aggregator.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
+    df = aggregator.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
+    response = flask.make_response(df.to_json(orient="records"))
+    response.headers['content-type'] = 'application/json'
+    return response
 
 
 @app.route('/aggregator/trader/<string:coin>', methods=['GET'])
@@ -92,14 +96,18 @@ def trader_training(coin):
     end_time = datetime.fromtimestamp(int(request.headers['end_time'])).strftime("%Y/%m/%d %H:%M:%S")
 
     df = aggregator.trader_training_data(coins, start_time, end_time)
-    return df.to_json(orient="records")
+    response = flask.make_response(df.to_json(orient="records"))
+    response.headers['content-type'] = 'application/json'
+    return response
 
 
 @app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])
 def latest_data(coin, aggregation):
     df = aggregator.get_latest_prediction_data(coin, aggregation)
     # return jsonify({'timestamp': timestamp, 'data': df.to_json(orient="records")})
-    return df.to_json(orient="records")
+    response = flask.make_response(df.to_json(orient="records"))
+    response.headers['content-type'] = 'application/json'
+    return response
 
 
 if __name__ == '__main__':

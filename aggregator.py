@@ -174,7 +174,7 @@ class Aggregator:
         for agg in Aggregator.get_aggregations():
             if result is None:
                 self.cursor.execute(
-                    "SELECT to_char(current_timestamp, 'FXYYYY-MM-DD\"T\"HH:MI:SS\"Z00:00\"'),coin,open_value,prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
+                    "SELECT to_char(current_timestamp, 'FXYYYY-MM-DD\"T\"HH:MI:SS\"Z-\"'),coin,open_value,prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
                     (coins, start_time, end_time, agg))
 
                 result = pd.DataFrame(self.cursor.fetchall(),
