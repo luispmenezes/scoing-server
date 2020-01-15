@@ -3,6 +3,7 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
+import pytz
 from keras.layers import Dense
 from keras.layers import LSTM
 from keras.models import Sequential
@@ -64,12 +65,14 @@ class Predictor:
         joblib.dump(scaler_Y, base_path + "/scaler_Y.save")
 
     def train_model(self, aggregation):
+        start_time = self.aggregator.start_time()
+        end_time = datetime.utcnow().replace(tzinfo=pytz.UTC)
         self.logger.info("Training %d model" % (aggregation))
-        dataframe_BTC = self.aggregator.get_training_data("BTCUSDT", aggregation)[csv_collumns]
+        dataframe_BTC = self.aggregator.get_training_data("BTCUSDT", aggregation,start_time,end_time)[csv_collumns]
         self.logger.debug("BTC dataframe recieved")
-        dataframe_ETH = self.aggregator.get_training_data("ETHUSDT", aggregation)[csv_collumns]
+        dataframe_ETH = self.aggregator.get_training_data("ETHUSDT", aggregation,start_time,end_time)[csv_collumns]
         self.logger.debug("ETH dataframe recieved")
-        dataframe_BNB = self.aggregator.get_training_data("BNBUSDT", aggregation)[csv_collumns]
+        dataframe_BNB = self.aggregator.get_training_data("BNBUSDT", aggregation,start_time,end_time)[csv_collumns]
         self.logger.info("Done!")
 
         dataframe = pd.concat([dataframe_BTC, dataframe_ETH, dataframe_BNB])

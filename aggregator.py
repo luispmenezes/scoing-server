@@ -82,8 +82,8 @@ class Aggregator:
                         ['%s'] * len(training_data)) + " ON CONFLICT DO NOTHING"
                     try:
                         self.cursor.execute(insert_query, training_data)
-                    except Exception as e:
-                        self.logger.info("Failed to insert training data ", e)
+                    except psycopg2.ProgrammingError as e:
+                        self.logger.info("Failed to insert training data (rolling back) ", e)
                         self.conn.rollback()
                         return
                     else:
@@ -187,3 +187,7 @@ class Aggregator:
                 result['pred_' + str(agg)] = pd.DataFrame(self.cursor.fetchall())
 
         return result
+
+    @staticmethod
+    def start_time():
+        return binance.get_exchange_startime()
