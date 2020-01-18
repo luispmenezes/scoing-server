@@ -9,7 +9,6 @@ import pytz
 from flask import Flask, jsonify, request
 
 from aggregator import Aggregator
-from binance import get_coin_list
 from collector import Collector
 from predictor import Predictor
 
@@ -34,9 +33,11 @@ def update_data_worker():
             collector.update_exchange_data()
             sleep(10)
         except Exception as e:
-            logger.info("Collector failed (now reconnecting)", e)
-            collector.connect_to_db()
-            sleep(60)
+            try:
+                logger.info("Collector failed (now reconnecting)", e)
+                collector.connect_to_db()
+            except:
+                sleep(120)
 
 
 def update_training_worker():
@@ -45,9 +46,11 @@ def update_training_worker():
             aggregator.update_training_data()
             sleep(120)
         except Exception as e:
-            logger.info("Collector failed (now reconnecting)", e)
-            collector.connect_to_db()
-            sleep(60)
+            try:
+                logger.info("Aggregator failed (now reconnecting)", e)
+                collector.connect_to_db()
+            except:
+                sleep(120)
 
 
 def predictor_worker():
@@ -59,9 +62,9 @@ def predictor_worker():
 @app.route('/predictor/latest/<string:coin>', methods=['GET'])
 def latest_prediction(coin):
     timestamp, open_value, predictions = predictor.get_latest_prediction(coin)
-    result = {"open_time": timestamp, "coin": coin, "open_value": open_value}
+    result = {"open_time": timestamp.isoformat("T") + "Z", "coin": coin, "open_value": open_value}
     for key in predictions.keys():
-        result["pred_"+str(key)] = str(predictions[key])
+        result["pred_" + str(key)] = float(predictions[key])
 
     return jsonify(result)
 
@@ -74,7 +77,7 @@ def predict(aggregation):
     logger.info(data)
     predictions = predictor.predict(data, aggregation)
     for ts in predictions:
-        predictions[ts] = str(predictions[ts])
+        predictions[ts] = float(predictions[ts])
 
     return jsonify(predictions)
 
