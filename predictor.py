@@ -67,11 +67,11 @@ class Predictor:
     def train_model(self, aggregation):
         start_time = self.aggregator.start_time()
         end_time = datetime.utcnow().replace(tzinfo=pytz.UTC)
-        self.logger.info("Training %d model" % (aggregation))
+        self.logger.info("Training %d model" % aggregation)
         dataframe_BTC = self.aggregator.get_training_data("BTCUSDT", aggregation,start_time,end_time)[csv_collumns]
-        self.logger.debug("BTC dataframe recieved")
+        self.logger.debug("BTC dataframe received")
         dataframe_ETH = self.aggregator.get_training_data("ETHUSDT", aggregation,start_time,end_time)[csv_collumns]
-        self.logger.debug("ETH dataframe recieved")
+        self.logger.debug("ETH dataframe received")
         dataframe_BNB = self.aggregator.get_training_data("BNBUSDT", aggregation,start_time,end_time)[csv_collumns]
         self.logger.info("Done!")
 
@@ -125,10 +125,12 @@ class Predictor:
     def get_latest_prediction(self, coin):
         predictions = {}
         timestamp = 0
+        open_value = 0.0
 
         for agg in self.aggregator.get_aggregations():
             data = self.aggregator.get_latest_prediction_data(coin, agg)
             timestamp = data['open_time'].iloc[0]
+            open_value = data['open_value'].iloc[0]
             data_x = data.iloc[:, 1:].values.reshape(1, -1)
             data_x = data_x.astype('float32')
             data_x = self.scalers_x[agg].transform(data_x)
@@ -137,7 +139,7 @@ class Predictor:
             scaled_prediction = self.scalers_y[agg].inverse_transform(prediction)[0][0]
             predictions[agg] = scaled_prediction
 
-        return timestamp, predictions
+        return timestamp, open_value, predictions
 
     def predict(self, data, agg):
         result = {}

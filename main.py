@@ -58,11 +58,12 @@ def predictor_worker():
 
 @app.route('/predictor/latest/<string:coin>', methods=['GET'])
 def latest_prediction(coin):
-    timestamp, predictions = predictor.get_latest_prediction(coin)
+    timestamp, open_value, predictions = predictor.get_latest_prediction(coin)
+    result = {"open_time": timestamp, "coin": coin, "open_value": open_value}
     for key in predictions.keys():
-        predictions[key] = str(predictions[key])
+        result["pred_"+str(key)] = str(predictions[key])
 
-    return jsonify({'timestamp': timestamp, 'predictions': predictions})
+    return jsonify(result)
 
 
 @app.route('/predictor/predict/<int:aggregation>', methods=['POST'])

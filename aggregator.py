@@ -41,18 +41,8 @@ class Aggregator:
         return self.cursor.fetchone()[0]
 
     def data_latest_ts(self, coin):
-        timestamp = None
-        while timestamp is None:
-            try:
-                self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
-            except Exception as e:
-                self.logger.info("Failed getting latest training timestamp")
-                self.logger.debug(e)
-            else:
-                result = self.cursor.fetchone()
-                if result is not None:
-                    timestamp = result[0]
-        return timestamp
+        self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
+        return self.cursor.fetchone()[0]
 
     def create_training_data_in_memory(self, coin, aggregation, start_time, end_time):
         self.cursor.execute(
@@ -104,7 +94,7 @@ class Aggregator:
         taker_buy_base_asset_volume = agg_range['taker_buy_base_asset_volume'].mean()
         taker_buy_quote_asset_volume = agg_range['taker_buy_quote_asset_volume'].mean()
         ma5 = df.iloc[idx - (5 * aggregation):idx]['close_value'].mean()
-        ma10 = df.iloc[idx - (10 * aggregation):idx]['close_value'].mean()
+        ma10 = df.iloc[:idx]['close_value'].mean()
 
         if training:
             prediction = df['open_value'].iloc[idx + aggregation]
@@ -174,7 +164,7 @@ class Aggregator:
         for agg in Aggregator.get_aggregations():
             if result is None:
                 self.cursor.execute(
-                    "SELECT to_char(current_timestamp, 'FXYYYY-MM-DD\"T\"HH:MI:SS\"Z-\"'),coin,open_value,prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
+                    "SELECT to_char(current_timestamp, 'FXYYYY-MM-DD\"T\"HH:MI:SS\"Z\"'),coin,open_value,prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
                     (coins, start_time, end_time, agg))
 
                 result = pd.DataFrame(self.cursor.fetchall(),

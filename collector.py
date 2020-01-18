@@ -38,18 +38,8 @@ class Collector:
                 'trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume']
 
     def data_latest_ts(self, coin):
-        timestamp = None
-        while timestamp is None:
-            try:
-                self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
-            except Exception as e:
-                self.logger.info("Failed getting latest training timestamp")
-                self.logger.debug(e)
-            else:
-                result = self.cursor.fetchone()
-                if result is not None:
-                    timestamp = result[0]
-        return timestamp
+        self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
+        return self.cursor.fetchone()[0]
 
     def grab_exchange_data(self, coin, start_time, end_time):
         loop_start_time = start_time
