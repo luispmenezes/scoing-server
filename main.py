@@ -48,7 +48,7 @@ def update_training_worker():
         except Exception as e:
             try:
                 logger.info("Aggregator failed (now reconnecting)", e)
-                collector.connect_to_db()
+                aggregator.connect_to_db()
             except:
                 sleep(120)
 
@@ -62,7 +62,7 @@ def predictor_worker():
 @app.route('/predictor/latest/<string:coin>', methods=['GET'])
 def latest_prediction(coin):
     timestamp, open_value, predictions = predictor.get_latest_prediction(coin)
-    result = {"open_time": timestamp.isoformat("T") + "Z", "coin": coin, "open_value": open_value}
+    result = {"open_time": timestamp.isoformat("T") + "Z", "coin": coin, "close_value": open_value}
     for key in predictions.keys():
         result["pred_" + str(key)] = float(predictions[key])
 
@@ -120,8 +120,8 @@ if __name__ == '__main__':
     update_training_thread = Thread(target=update_training_worker)
     predictor_thread = Thread(target=predictor_worker)
 
-    update_data_thread.start()
-    update_training_thread.start()
+    #update_data_thread.start()
+    #update_training_thread.start()
     # predictor_thread.start()
 
     app.run(host='0.0.0.0', port=8989)

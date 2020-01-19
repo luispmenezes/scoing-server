@@ -125,12 +125,12 @@ class Predictor:
     def get_latest_prediction(self, coin):
         predictions = {}
         timestamp = 0
-        open_value = 0.0
+        close_value = 0.0
 
         for agg in self.aggregator.get_aggregations():
             data = self.aggregator.get_latest_prediction_data(coin, agg)
             timestamp = data['open_time'].iloc[0]
-            open_value = data['open_value'].iloc[0]
+            close_value = data['close_value'].iloc[0]
             data_x = data.iloc[:, 1:].values.reshape(1, -1)
             data_x = data_x.astype('float32')
             data_x = self.scalers_x[agg].transform(data_x)
@@ -139,7 +139,7 @@ class Predictor:
             scaled_prediction = self.scalers_y[agg].inverse_transform(prediction)[0][0]
             predictions[agg] = scaled_prediction
 
-        return timestamp, open_value, predictions
+        return timestamp, close_value, predictions
 
     def predict(self, data, agg):
         result = {}
