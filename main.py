@@ -120,8 +120,8 @@ if __name__ == '__main__':
     update_training_thread = Thread(target=update_training_worker)
     predictor_thread = Thread(target=predictor_worker)
 
-    #update_data_thread.start()
-    #update_training_thread.start()
+    update_data_thread.start()
+    update_training_thread.start()
     # predictor_thread.start()
 
     app.run(host='0.0.0.0', port=8989)
