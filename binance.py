@@ -9,6 +9,8 @@ class Symbol(Enum):
     BITCOIN = 'BTCUSDT'
     ETHEREUM = 'ETHUSDT'
     BINANCE_COIN = 'BNBUSDT'
+    LITECOIN = 'LTCUSDT'
+    RIPPLE = 'XRPUSDT'
 
 
 class Client:
