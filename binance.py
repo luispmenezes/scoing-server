@@ -1,3 +1,7 @@
+import collections
+import hashlib
+import hmac
+
 import pytz
 import requests
 import datetime
@@ -17,12 +21,16 @@ class Client:
     ENDPOINT = 'https://api.binance.com'
     KLINE_PATH = '/api/v3/klines'
     PING_PATH = '/api/v3/ping'
+    TIME_PATH = '/api/v3/time'
+    EXCHANGE_INFO_PATH = '/api/v3/exchangeInfo'
+    PRICE_TICKER_PATH = '/api/v3/ticker/price'
+    BOOK_TICKER_PATH = '/api/v3/ticker/bookTicker'
 
     def __init__(self, api_key, api_secret):
         self.api_key = api_key
         self.api_secret = api_secret
 
-    def send_request(self, method, path, params={}):
+    def send_request(self, method, path, params):
         headers = {'apiKey': self.api_key, 'secretKey': self.api_secret}
         logging.debug('Sending binance request (%s %s %s)' % (method, self.ENDPOINT + path, params))
         response = requests.request(method, headers=headers, params=params, url=self.ENDPOINT + path)
@@ -31,8 +39,25 @@ class Client:
         else:
             return response.status_code, response.json()
 
+    def send_signed_request(self, method, path, params, recv_window=5000):
+        params['recvWindow'] = recv_window
+        params['signature'] = self.generate_signature(params)
+        self.send_request(method, path, params)
+
+    def generate_signature(self, params):
+        ordered_params = collections.OrderedDict(sorted(params.items()))
+        query_string = '&'.join(["{}={}".format(d[0], d[1]) for d in ordered_params])
+        signature = hmac.new(self.api_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256)
+        return signature.hexdigest()
+
     def ping(self):
-        return self.send_request('GET', self.PING_PATH)
+        return self.send_request('GET', self.PING_PATH, {})
+
+    def server_time(self):
+        return self.send_request('GET', self.TIME_PATH, {})
+
+    def exchange_info(self):
+        return self.send_request('GET', self.EXCHANGE_INFO_PATH, {})
 
     def klines(self, symbol, interval, start_time=None, end_time=None):
         logging.debug('Get Klines (symbol:%s, interval:%s, start_time=%s, end_time=%s)' % (
@@ -60,6 +85,12 @@ class Client:
             jsonData += self.send_request('GET', self.KLINE_PATH, params)[1]
 
         return jsonData
+
+    def price_ticker(self, coin):
+        return self.send_request('GET', self.PRICE_TICKER_PATH, {'symbol': coin})
+
+    def book_ticker(self, coin):
+        return self.send_request('GET', self.BOOK_TICKER_PATH, {'symbol': coin})
 
 
 def get_epoch(date):
