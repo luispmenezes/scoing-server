@@ -13,9 +13,12 @@ from sklearn.preprocessing import MinMaxScaler
 
 csv_collumns = ['open_value', 'high', 'low', 'close_value', 'volume', 'quote_asset_volume', 'trades',
                 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ma5', 'ma10', 'prediction']
+coin_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "LTCUSDT"]
 num_features = len(csv_collumns) - 1
 
-model_output_path = "./model"
+base_path = "./data"
+model_output_path = base_path + "/model"
+training_output_path = base_path + "/training"
 
 
 class Predictor:
@@ -47,35 +50,52 @@ class Predictor:
                 temp_scalers_x[agg] = scaler_x
                 temp_scalers_y[agg] = scaler_y
             except Exception:
-                temp_models[agg], temp_scalers_x[agg], temp_scalers_y[agg] = self.train_model(agg)
+                dataframe = self.get_training_from_server(coin_list,agg)
+                temp_models[agg], temp_scalers_x[agg], temp_scalers_y[agg] = self.train_model(agg,dataframe)
 
         return temp_models, temp_scalers_x, temp_scalers_y
 
     def save_model_files(self, aggregation, model, scaler_X, scaler_Y):
-        base_path = model_output_path + "/" + str(aggregation)
+        path = model_output_path + "/" + str(aggregation)
 
-        if not os.path.exists(base_path):
-            os.mkdir(base_path)
+        if not os.path.exists(path):
+            os.mkdir(path)
 
         model_json = model.to_json()
-        with open(base_path + "/model.json", "w") as json_file:
+        with open(path + "/model.json", "w") as json_file:
             json_file.write(model_json)
-        model.save_weights(base_path + "/model.h5")
-        joblib.dump(scaler_X, base_path + "/scaler_X.save")
-        joblib.dump(scaler_Y, base_path + "/scaler_Y.save")
+        model.save_weights(path + "/model.h5")
+        joblib.dump(scaler_X, path + "/scaler_X.save")
+        joblib.dump(scaler_Y, path + "/scaler_Y.save")
 
-    def train_model(self, aggregation):
+    def get_training_from_server(self, coins, aggregation, save=False):
+        training_data = []
         start_time = self.aggregator.start_time()
         end_time = datetime.utcnow().replace(tzinfo=pytz.UTC)
-        self.logger.info("Training %d model" % aggregation)
-        dataframe_BTC = self.aggregator.get_training_data("BTCUSDT", aggregation,start_time,end_time)[csv_collumns]
-        self.logger.debug("BTC dataframe received")
-        dataframe_ETH = self.aggregator.get_training_data("ETHUSDT", aggregation,start_time,end_time)[csv_collumns]
-        self.logger.debug("ETH dataframe received")
-        dataframe_BNB = self.aggregator.get_training_data("BNBUSDT", aggregation,start_time,end_time)[csv_collumns]
-        self.logger.info("Done!")
+        for coin in coins:
+            self.logger.info("Getting %s,%d data from server" % (coin, aggregation))
+            training_data.append(
+                self.aggregator.get_training_data(coin, aggregation, start_time, end_time)[csv_collumns])
 
-        dataframe = pd.concat([dataframe_BTC, dataframe_ETH, dataframe_BNB])
+        dataframe = pd.concat(training_data)
+        if save:
+            if not os.path.exists(training_output_path):
+                os.mkdir(training_output_path)
+
+            filename = "training_%d_%s.csv" % (aggregation, '_'.join(coins))
+            dataframe.to_csv(training_output_path + "/" + filename)
+
+        return dataframe
+
+    def get_training_from_file(self, coins, aggregation):
+        filename = "training_%d_%s.csv" % (aggregation, '_'.join(coins))
+        if os.path.isfile(training_output_path + "/" + filename):
+            return pd.to_csv(training_output_path + "/" + filename)
+        else:
+            return self.get_training_from_server(coins, aggregation, True)
+
+    def train_model(self, aggregation, dataframe, epochs=50):
+        self.logger.info("Training model for %d" % aggregation)
 
         dataset = dataframe.values
         dataset = dataset.astype('float32')
@@ -115,8 +135,8 @@ class Predictor:
         model = Sequential()
         model.add(LSTM(4, input_shape=(1, num_features)))
         model.add(Dense(1))
-        model.compile(loss='mean_squared_error', optimizer='adam')
-        model.fit(x_train, y_train, epochs=50, verbose=2, validation_data=(x_validation, y_validation))
+        model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
+        model.fit(x_train, y_train, epochs=epochs, verbose=2, validation_data=(x_validation, y_validation))
 
         self.save_model_files(aggregation, model, scaler_X, scaler_Y)
 
