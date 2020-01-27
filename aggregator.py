@@ -125,12 +125,12 @@ class Aggregator:
                                                         latest_training_timestamp.replace(tzinfo=pytz.UTC),
                                                         latest_data_timestamp.replace(tzinfo=pytz.UTC))
 
-    def get_training_data(self, coin, aggregation, start_time, end_time):
+    def get_training_data(self, coins, aggregation, start_time, end_time):
         self.cursor.execute(
             "SELECT open_time,open_value,high,low,close_value,volume,quote_asset_volume,trades," +
             "taker_buy_base_asset_volume,taker_buy_quote_asset_volume,ma5,ma10,prediction FROM cointron.training_data " +
-            "WHERE coin=%s AND aggregation=%s AND open_time >= %s  AND open_time <= %s ORDER BY open_time ASC",
-            (coin, aggregation, start_time, end_time))
+            "WHERE coin IN %s AND aggregation=%s AND open_time >= %s  AND open_time <= %s ORDER BY open_time ASC",
+            (coins, aggregation, start_time, end_time))
 
         return pd.DataFrame(self.cursor.fetchall(),
                             columns=['open_time', 'open_value', 'high', 'low', 'close_value',

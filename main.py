@@ -84,6 +84,7 @@ def predict(aggregation):
 
 @app.route('/aggregator/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
+    #TODO: varias coins
     df = aggregator.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
     response = flask.make_response(df.to_json(orient="records"))
     response.headers['content-type'] = 'application/json'

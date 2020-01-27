@@ -1,8 +1,8 @@
 import os
 from datetime import datetime
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pytz
 from keras.layers import Dense
 from keras.layers import LSTM
@@ -13,7 +13,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 csv_collumns = ['open_value', 'high', 'low', 'close_value', 'volume', 'quote_asset_volume', 'trades',
                 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ma5', 'ma10', 'prediction']
-coin_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "LTCUSDT"]
+coin_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "LTCUSDT", "XRPUSDT"]
 num_features = len(csv_collumns) - 1
 
 base_path = "./data"
@@ -50,8 +50,8 @@ class Predictor:
                 temp_scalers_x[agg] = scaler_x
                 temp_scalers_y[agg] = scaler_y
             except Exception:
-                dataframe = self.get_training_from_server(coin_list,agg)
-                temp_models[agg], temp_scalers_x[agg], temp_scalers_y[agg] = self.train_model(agg,dataframe)
+                dataframe = self.get_training_from_file(coin_list, agg)
+                temp_models[agg], temp_scalers_x[agg], temp_scalers_y[agg] = self.train_model(agg, dataframe)
 
         return temp_models, temp_scalers_x, temp_scalers_y
 
@@ -69,15 +69,12 @@ class Predictor:
         joblib.dump(scaler_Y, path + "/scaler_Y.save")
 
     def get_training_from_server(self, coins, aggregation, save=False):
-        training_data = []
+        self.logger.info("Getting data for Coins:%s Aggregation:%d data from server" % (coins, aggregation))
         start_time = self.aggregator.start_time()
         end_time = datetime.utcnow().replace(tzinfo=pytz.UTC)
-        for coin in coins:
-            self.logger.info("Getting %s,%d data from server" % (coin, aggregation))
-            training_data.append(
-                self.aggregator.get_training_data(coin, aggregation, start_time, end_time)[csv_collumns])
+        dataframe = self.aggregator.get_training_data(tuple(coins), aggregation, start_time, end_time)
+        dataframe = dataframe.drop(columns=['open_time'])
 
-        dataframe = pd.concat(training_data)
         if save:
             if not os.path.exists(training_output_path):
                 os.mkdir(training_output_path)
@@ -90,12 +87,15 @@ class Predictor:
     def get_training_from_file(self, coins, aggregation):
         filename = "training_%d_%s.csv" % (aggregation, '_'.join(coins))
         if os.path.isfile(training_output_path + "/" + filename):
-            return pd.to_csv(training_output_path + "/" + filename)
+            return pd.read_csv(training_output_path + "/" + filename)
         else:
             return self.get_training_from_server(coins, aggregation, True)
 
-    def train_model(self, aggregation, dataframe, epochs=50):
+    def train_model(self, aggregation, dataframe, epochs=250, batch_size=1000):
         self.logger.info("Training model for %d" % aggregation)
+
+        self.logger.debug("Shuffling dataset...")
+        dataframe = dataframe.reindex(np.random.permutation(dataframe.index))
 
         dataset = dataframe.values
         dataset = dataset.astype('float32')
@@ -133,10 +133,20 @@ class Predictor:
 
         # Train Model
         model = Sequential()
-        model.add(LSTM(4, input_shape=(1, num_features)))
+        model.add(LSTM(200, input_shape=(1, num_features), activation='relu', return_sequences=True))
+        model.add(LSTM(100, activation='relu', return_sequences=True))
+        model.add(LSTM(50, activation='relu', return_sequences=True))
+        model.add(LSTM(25, activation='relu'))
+        model.add(Dense(20, activation='relu'))
+        model.add(Dense(10, activation='relu'))
         model.add(Dense(1))
-        model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
-        model.fit(x_train, y_train, epochs=epochs, verbose=2, validation_data=(x_validation, y_validation))
+        model.compile(loss='mean_squared_error', optimizer='adam',
+                      metrics=['mae', 'acc'])
+        model.fit(x_train, y_train, epochs=epochs, verbose=2, validation_data=(x_validation, y_validation),
+                  batch_size=batch_size)
+
+        loss, mae, acc = model.evaluate(x_test, y_test, verbose=2)
+        self.logger.info("Testing loss: %d, mae:%d, acc: %d" % (loss, mae, acc))
 
         self.save_model_files(aggregation, model, scaler_X, scaler_Y)
 
