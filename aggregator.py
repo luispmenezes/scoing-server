@@ -182,3 +182,83 @@ class Aggregator:
     @staticmethod
     def start_time():
         return binance.get_exchange_startime()
+
+    def generate_interval_data(self, coin, interval_value):
+        self.cursor.execute("SELECT * FROM cointron.binance_data WHERE coin = %s", (coin,))
+        dataframe = pd.DataFrame(self.cursor.fetchall(),
+                                 columns=Collector.data_collumns())
+        interval_total = 0
+        last_idx = 0
+        interval_data = []
+
+        for idx in dataframe.shape[0]:
+            interval_total += dataframe.iloc[idx]["quote_asset_volume"]
+            if count > interval_value:
+                start_time = dataframe.iloc[last_idx]["open_time"]
+                end_time = dataframe.iloc[last_idx]["open_time"]
+                open_value = dataframe.iloc[last_idx]['open_value']
+                close_value = dataframe.iloc[idx]['close_value']
+                high = dataframe.iloc[last_idx:idx]['high'].max()
+                low = dataframe.iloc[last_idx:idx]['low'].min()
+                volume = dataframe.iloc[last_idx:idx]['volume'].sum()
+                trades = dataframe.iloc[last_idx:idx]['trades'].sum()
+                taker_buy_asset_volume = dataframe.iloc[last_idx:idx]['taker_buy_base_asset_volume'].sum()
+                interval_data.append((coin, start_time, end_time, open_value, close_value, high, low, volume, trades,
+                                      taker_buy_asset_volume))
+                last_idx = idx
+                interval_total = 0
+
+        insert_query = "INSERT INTO cointron.binance_interval_data VALUES" + ','.join(['%s'] * len(interval_data))
+
+        try:
+            self.cursor.execute(insert_query, interval_data)
+        except psycopg2.ProgrammingError as e:
+            self.logger.info("Failed to insert interval data (rolling back) ", e)
+            self.conn.rollback()
+            return
+        else:
+            self.conn.commit()
+
+    def generate_training_data(self, coin, aggregation, start_time, end_time):
+        pass
+
+    def compute_features(self, coin, current_time, aggregation):
+        #TODO SELECT FROM INTERVAL
+        data = None
+
+        ma5 = self.compute_moving_average(current_date, 5)
+        ma10 = self.compute_moving_average(current_date, 10)
+
+        high = data['high'].max()
+        low = data['low'].min()
+        close = data['close_value'].iloc[-1]
+        volume = data['volume'].sum()
+        trades = int(data['trades'].sum())
+        tbav = data['taker_buy_base_asset_volume'].mean()
+
+        # Price
+        high_low_swing = high / low
+        price_swing = close / data['open_value'].iloc[0]
+        close_md_5 = (abs(close - ma5[0]) / ma5[0]) * 100
+        close_md_10 = (abs(close - ma10[0]) / ma10[0]) * 100
+        close_oscillator = ma10[0] / ma5[0]
+        # Volume
+        volume_md_5 = (abs(volume - ma5[1]) / ma5[1]) * 100
+        volume_md_10 = (abs(volume - ma10[1]) / ma10[1]) * 100
+        volume_oscillator = ma10[1] / ma5[1]
+        # Trades
+        trades_md_5 = (abs(trades - ma5[2]) / ma5[2]) * 100
+        trades_md_10 = (abs(trades - ma10[2]) / ma10[2]) * 100
+        trades_oscillator = ma10[2] / ma5[2]
+        # TBAV
+        tbav_md_5 = (abs(tbav - ma5[3]) / ma5[3]) * 100
+        tbav_md_10 = (abs(tbav - ma10[3]) / ma10[3]) * 100
+        tbav_oscillator = ma10[3] / ma5[3]
+
+        return high_low_swing, price_swing, close_md_5, close_md_10, close_oscillator, volume_md_5, volume_md_10, \
+               volume_oscillator, trades_md_5, trades_md_10, trades_oscillator, tbav_md_5, tbav_md_10, tbav_oscillator
+
+    def compute_moving_average(self, current_date, size):
+        #TODO SELECT AVGS FROM INTERVAL
+        data = None
+        return data
