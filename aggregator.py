@@ -183,58 +183,108 @@ class Aggregator:
     def start_time():
         return binance.get_exchange_startime()
 
-    def generate_interval_data(self, coin, interval_value):
-        self.cursor.execute("SELECT * FROM cointron.binance_data WHERE coin = %s", (coin,))
+    def interval_data_latest_ts(self, coin: str):
+        self.cursor.execute(
+            "SELECT MAX(open_time),MAX(idx) FROM cointron.binance_intervals WHERE coin=%s", (coin,))
+        result = self.cursor.fetchone()
+        if result is None:
+            return None, None
+        else:
+            return result[0], result[1]
+
+    def update_interval_data(self):
+        for coin in binance.get_coin_list():
+            latest_data_timestamp = self.data_latest_ts(coin)
+            latest_interval_timestamp, latest_interval_index = self.interval_data_latest_ts(coin)
+            if latest_data_timestamp is not None:
+                if latest_interval_timestamp is None:
+                    self.logger.info("Creating interval data from scratch (%s)..." % coin)
+                    latest_interval_timestamp = binance.get_exchange_startime()
+                    latest_interval_index = 0
+                else:
+                    latest_interval_index += 1
+                    latest_interval_timestamp += timedelta(minutes=1)
+                    self.logger.info("Updating Training Data for %s from %s to %s" % (
+                        coin, latest_interval_timestamp, latest_data_timestamp))
+                self.generate_interval_data(coin, latest_interval_timestamp.replace(tzinfo=pytz.UTC),
+                                            latest_data_timestamp.replace(tzinfo=pytz.UTC), latest_interval_index)
+
+    def generate_interval_data(self, coin: str, start_time, end_time, latest_index=0, interval_value=1000000):
+
+        self.logger.debug("Grabbing data for %s from %s to %s" % (coin, start_time, end_time))
+
+        self.cursor.execute(
+            "SELECT * FROM cointron.binance_data WHERE coin = %s AND open_time >= %s AND open_time <= %s",
+            (coin, start_time, end_time))
         dataframe = pd.DataFrame(self.cursor.fetchall(),
                                  columns=Collector.data_collumns())
+
+        self.logger.info("Computing interval data for %d records of %s" % (dataframe.shape[0], coin))
+
         interval_total = 0
         last_idx = 0
         interval_data = []
 
-        for idx in dataframe.shape[0]:
+        for idx in range(dataframe.shape[0]):
             interval_total += dataframe.iloc[idx]["quote_asset_volume"]
-            if count > interval_value:
+            if interval_total > interval_value:
                 start_time = dataframe.iloc[last_idx]["open_time"]
-                end_time = dataframe.iloc[last_idx]["open_time"]
+                end_time = dataframe.iloc[idx]["open_time"]
                 open_value = dataframe.iloc[last_idx]['open_value']
                 close_value = dataframe.iloc[idx]['close_value']
                 high = dataframe.iloc[last_idx:idx]['high'].max()
                 low = dataframe.iloc[last_idx:idx]['low'].min()
                 volume = dataframe.iloc[last_idx:idx]['volume'].sum()
-                trades = dataframe.iloc[last_idx:idx]['trades'].sum()
+                trades = int(dataframe.iloc[last_idx:idx]['trades'].sum())
                 taker_buy_asset_volume = dataframe.iloc[last_idx:idx]['taker_buy_base_asset_volume'].sum()
-                interval_data.append((coin, start_time, end_time, open_value, close_value, high, low, volume, trades,
-                                      taker_buy_asset_volume))
+                interval_data.append(
+                    (coin, latest_index, start_time, end_time, open_value, close_value, high, low, volume, trades,
+                     taker_buy_asset_volume))
+                latest_index += 1
                 last_idx = idx
                 interval_total = 0
 
-        insert_query = "INSERT INTO cointron.binance_interval_data VALUES" + ','.join(['%s'] * len(interval_data))
+                if len(interval_data) % 10000 == 0:
+                    self.logger.info("Interval (%s) progress: %.2f %%" % (coin, (idx / dataframe.shape[0]) * 100))
+                    insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(
+                        ['%s'] * len(interval_data))
+
+                    try:
+                        self.cursor.execute(insert_query, interval_data)
+                    except psycopg2.ProgrammingError as e:
+                        self.logger.info("Failed to insert interval data (rolling back) ", e)
+                        self.conn.rollback()
+                        exit(-1)
+                    else:
+                        self.conn.commit()
+                        interval_data.clear()
+
+        insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(['%s'] * len(interval_data))
 
         try:
             self.cursor.execute(insert_query, interval_data)
         except psycopg2.ProgrammingError as e:
             self.logger.info("Failed to insert interval data (rolling back) ", e)
             self.conn.rollback()
-            return
+            exit(-1)
         else:
             self.conn.commit()
 
     def generate_training_data(self, coin, aggregation, start_time, end_time):
         pass
 
-    def compute_features(self, coin, current_time, aggregation):
-        #TODO SELECT FROM INTERVAL
-        data = None
+    def compute_features(self, data: pd.DataFrame, index: int, aggregation: int):
+        ma5 = self.compute_moving_average(data, index, 5)
+        ma10 = self.compute_moving_average(data, index, 10)
 
-        ma5 = self.compute_moving_average(current_date, 5)
-        ma10 = self.compute_moving_average(current_date, 10)
+        agg_data = data.iloc[index - aggregation:index]
 
-        high = data['high'].max()
-        low = data['low'].min()
-        close = data['close_value'].iloc[-1]
-        volume = data['volume'].sum()
-        trades = int(data['trades'].sum())
-        tbav = data['taker_buy_base_asset_volume'].mean()
+        high = agg_data['high'].max()
+        low = agg_data['low'].min()
+        close = agg_data['close_value'].iloc[-1]
+        volume = agg_data['volume'].sum()
+        trades = int(agg_data['trades'].sum())
+        tbav = agg_data['taker_buy_base_asset_volume'].mean()
 
         # Price
         high_low_swing = high / low
@@ -258,7 +308,10 @@ class Aggregator:
         return high_low_swing, price_swing, close_md_5, close_md_10, close_oscillator, volume_md_5, volume_md_10, \
                volume_oscillator, trades_md_5, trades_md_10, trades_oscillator, tbav_md_5, tbav_md_10, tbav_oscillator
 
-    def compute_moving_average(self, current_date, size):
-        #TODO SELECT AVGS FROM INTERVAL
-        data = None
-        return data
+    def compute_moving_average(self, data: pd.DataFrame, index: int, size: int):
+        ma_data = data.iloc[index - size:index]
+        ma_price = ma_data['open_value'].mean()
+        ma_volume = ma_data['volume'].mean()
+        ma_trades = ma_data['trades'].mean()
+        ma_tbav = ma_data['taker_buy_base_asset_volume'].mean()
+        return ma_price, ma_volume, ma_trades, ma_tbav
