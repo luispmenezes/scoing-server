@@ -11,8 +11,10 @@ from keras.models import model_from_json
 from sklearn.externals import joblib
 from sklearn.preprocessing import MinMaxScaler
 
-csv_collumns = ['open_value', 'high', 'low', 'close_value', 'volume', 'quote_asset_volume', 'trades',
-                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ma5', 'ma10', 'prediction']
+csv_collumns = ['close_value', 'high_low_swing', 'price_swing', 'close_mdev_20', 'close_mdev_100', 'close_oscillator',
+                'volume_mdev_20', 'volume_mdev_100', 'volume_oscillator', 'trades_mdev_20', 'trades_mdev_100',
+                'trades_oscillator', 'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi', 'bb_band_range',
+                'bb_up_mdev', 'bb_lo_mdev', 'prediction']
 coin_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "LTCUSDT", "XRPUSDT"]
 num_features = len(csv_collumns) - 1
 
