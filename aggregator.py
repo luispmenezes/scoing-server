@@ -229,7 +229,8 @@ class Aggregator:
                 (coin, aggregation, current_interval['open_time'], current_interval['close_value']) + training_entry + (
                     (prediction / current_interval['close_value']) - 1.0,))
 
-            if len(training_data) % 5 == 0:
+            if len(training_data) % 1000 == 0:
+                self.logger.info("Training Data (%s) progress: %.2f %%" % (coin, (i / self.interval_data.shape[0]) * 100))
                 insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(['%s'] * len(training_data))
 
                 if len(training_data) > 0:
@@ -276,6 +277,7 @@ class Aggregator:
         tbav_oscillator = ma100[3] / ma20[3]
 
         rsi = self.__feature_RSI(index, aggregation)
+        cci = self.__feature_CCI(index, aggregation)
         abs_mid_band, abs_up_band, abs_lo_band = self.__feature_bollinger_bands(index, aggregation)
         bb_up_mdev = abs(abs_up_band - close) / close
         bb_lo_mdev = abs(abs_lo_band - close) / close
@@ -284,7 +286,7 @@ class Aggregator:
 
         return high_low_swing, price_swing, close_mdev_20, close_mdev_100, close_oscillator, volume_mdev_20, volume_mdev_100, \
                volume_oscillator, trades_mdev_20, trades_mdev_100, trades_oscillator, tbav_mdev_20, tbav_mdev_100, tbav_oscillator, \
-               rsi, bb_band_range, bb_up_mdev, bb_lo_mdev
+               rsi, cci, bb_band_range, bb_up_mdev, bb_lo_mdev
 
     def __feature_RSI(self, index: int, aggregation: int):
         up_list = []
@@ -322,10 +324,26 @@ class Aggregator:
 
         return midBand, upBand, loBand
 
+    def __feature_CCI(self, index: int, aggregation: int):
+        tp_list = []
+
+        for i in range(index - 20 * aggregation, index - aggregation, aggregation):
+            close = self.interval_data.iloc[i - aggregation:i]['close_value'].mean()
+            high = self.interval_data.iloc[i - aggregation:i]['high'].max()
+            low = self.interval_data.iloc[i - aggregation:i]['low'].min()
+
+            tp_list.append((close + high + low) / 3)
+
+        current_tp = tp_list.pop(-1)
+        avg_tp = sum(tp_list) / len(tp_list)
+        md_tp = statistics.stdev(tp_list)
+
+        return (current_tp - avg_tp) / (0.015 * md_tp)
+
     def compute_moving_average(self, data: pd.DataFrame, index: int, aggregation: int, size: int):
         ma_data = data.iloc[index - (size * aggregation):index]
-        ma_price = ma_data['close_value'].mean()
-        ma_volume = ma_data['volume'].mean()
-        ma_trades = ma_data['trades'].mean()
-        ma_tbav = ma_data['taker_buy_asset_volume'].mean()
+        ma_price = ma_data['close_value'].sum() / size
+        ma_volume = ma_data['volume'].sum() / size
+        ma_trades = ma_data['trades'].sum() / size
+        ma_tbav = ma_data['taker_buy_asset_volume'].sum() / size
         return ma_price, ma_volume, ma_trades, ma_tbav
