@@ -1,4 +1,3 @@
-import concurrent.futures
 import statistics
 from datetime import timedelta
 
@@ -10,7 +9,7 @@ from psycopg2 import pool
 import binance
 from collector import Collector
 
-aggregation_list = {5, 10, 100}
+aggregation_list = {10}
 
 
 class Aggregator:
@@ -39,13 +38,13 @@ class Aggregator:
 
     def training_data_get_latest_timestamp(self, coin, aggregation):
         self.cursor.execute(
-            "SELECT MAX(open_time), MAX(idx)  FROM cointron.training_data WHERE coin=%s AND aggregation=%s",
+            "SELECT MAX(open_time) FROM cointron.training_data WHERE coin=%s AND aggregation=%s",
             (coin, aggregation))
         result = self.cursor.fetchone()
         if result is None:
-            return None, None
+            return None
         else:
-            return result[0], result[1]
+            return result[0]
 
     def data_latest_ts(self, coin):
         self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
@@ -55,34 +54,38 @@ class Aggregator:
         for aggregation in aggregation_list:
             for coin in binance.get_coin_list():
                 latest_data_timestamp, latest_data_index = self.interval_data_latest_ts(coin)
-                latest_training_timestamp, latest_training_index = self.training_data_get_latest_timestamp(coin,
-                                                                                                           aggregation)
-                if latest_data_index is not None:
-                    if latest_training_index is None:
+                latest_training_timestamp = self.training_data_get_latest_timestamp(coin,
+                                                                                    aggregation)
+                if latest_data_timestamp is not None:
+                    if latest_training_timestamp is None:
                         self.logger.info("Creating training data from scratch (%s,%d)..." % (coin, aggregation))
                         self.generate_training_data(coin, aggregation, 0)
                     else:
                         self.logger.info("Updating Training Data for %s,%d from %s to %s" % (
                             coin, aggregation, latest_training_timestamp,
                             latest_data_timestamp))
+
+                        self.cursor.execute(
+                            "SELECT idx FROM cointron.binance_intervals WHERE coin=%s AND open_time=%s",
+                            (coin, latest_training_timestamp))
+
                         self.generate_training_data(coin, aggregation,
-                                                    max(latest_training_index - (aggregation * 100), 0))
+                                                    max(self.cursor.fetchone()[0] - (aggregation * 99), 0))
 
     def get_training_data(self, coins, aggregation, start_time, end_time):
         self.cursor.execute(
             "SELECT open_time,close_value,high_low_swing,price_swing,close_mdev_20,close_mdev_100,close_oscillator," +
             "volume_mdev_20,volume_mdev_100,volume_oscillator,trades_mdev_20,trades_mdev_100,trades_oscillator," +
-            "tbav_mdev_20,tbav_mdev_100,tbav_oscillator,rsi,bb_band_range,bb_up_mdev,bb_lo_mdev,prediction FROM " +
-            "cointron.training_data WHERE coin IN %s AND aggregation=%s AND open_time >= %s  " +
-            "AND open_time <= %s ORDER BY open_time ASC",
-            (coins, aggregation, start_time, end_time))
+            "tbav_mdev_20,tbav_mdev_100,tbav_oscillator,rsi,cci,bb_band_range,bb_up_mdev,bb_lo_mdev,stoch," +
+            "aroon_up,aroon_down,prediction FROM cointron.training_data WHERE coin IN %s AND aggregation=%s AND open_time >= %s  " +
+            "AND open_time <= %s ORDER BY open_time ASC", (coins, aggregation, start_time, end_time))
 
         return pd.DataFrame(self.cursor.fetchall(),
                             columns=['open_time', 'close_value', 'high_low_swing', 'price_swing', 'close_mdev_20',
                                      'close_mdev_100', 'close_oscillator', 'volume_mdev_20', 'volume_mdev_100',
                                      'volume_oscillator', 'trades_mdev_20', 'trades_mdev_100', 'trades_oscillator',
-                                     'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi', 'bb_band_range',
-                                     'bb_up_mdev', 'bb_lo_mdev', 'prediction'])
+                                     'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi', 'cci', 'bb_band_range',
+                                     'bb_up_mdev', 'bb_lo_mdev', 'stoch', 'aroon_up', 'aroon_down', 'prediction'])
 
     def get_latest_prediction_data(self, coin, aggregation):
         timestamp = self.data_latest_ts(coin)
@@ -216,7 +219,10 @@ class Aggregator:
             else:
                 self.conn.commit()
 
-    def generate_training_data(self, coin: str, aggregation: int, start_idx: int):
+    def generate_training_data(self, coin: str, aggregation: int, start_idx):
+
+        self.logger.debug("Generating training data (%s,%d) from idx %s" % (coin, aggregation, start_idx))
+
         self.cursor.execute(
             "SELECT idx,open_time,open_value,high,low,close_value,volume,trades,taker_buy_asset_volume " +
             "FROM cointron.binance_intervals WHERE coin=%s AND idx >= %s ORDER BY idx ASC",
@@ -229,10 +235,10 @@ class Aggregator:
 
         for i in range(100 * aggregation, self.interval_data.shape[0] - aggregation):
             training_entry = self.compute_features(i, aggregation)
-            prediction = float(self.interval_data.loc[self.interval_data['idx'] == i + aggregation]['close_value'])
+            prediction = float(self.interval_data.iloc[i + aggregation]['close_value'])
             current_interval = self.interval_data.iloc[i]
             training_data.append(
-                (coin, aggregation, i - (100 * aggregation), current_interval['open_time'],
+                (coin, aggregation, current_interval['open_time'],
                  current_interval['close_value']) + training_entry + (
                     (prediction / current_interval['close_value']) - 1.0,))
 
@@ -292,9 +298,12 @@ class Aggregator:
 
         bb_band_range = abs(abs_lo_band - abs_up_band) / abs_mid_band
 
+        stoch = self.__feature_STOCH(data_idx, aggregation)
+        aroon_up, aroon_down = self.__feature_AROON(data_idx, aggregation)
+
         return high_low_swing, price_swing, close_mdev_20, close_mdev_100, close_oscillator, volume_mdev_20, volume_mdev_100, \
                volume_oscillator, trades_mdev_20, trades_mdev_100, trades_oscillator, tbav_mdev_20, tbav_mdev_100, tbav_oscillator, \
-               rsi, cci, bb_band_range, bb_up_mdev, bb_lo_mdev
+               rsi, cci, bb_band_range, bb_up_mdev, bb_lo_mdev, stoch, aroon_up, aroon_down
 
     def __feature_RSI(self, index: int, aggregation: int):
         up_list = []
@@ -315,10 +324,10 @@ class Aggregator:
 
         return 100 * (up_avg / (up_avg + dn_avg))
 
-    def __feature_bollinger_bands(self, index: int, aggregation: int):
+    def __feature_bollinger_bands(self, index: int, aggregation: int, intervals=14):
         tp_list = []
 
-        for i in range(index - 14 * aggregation, index, aggregation):
+        for i in range(index - intervals * aggregation, index, aggregation):
             close = self.interval_data.iloc[i - aggregation:i]['close_value'].mean()
             high = self.interval_data.iloc[i - aggregation:i]['high'].max()
             low = self.interval_data.iloc[i - aggregation:i]['low'].min()
@@ -332,10 +341,10 @@ class Aggregator:
 
         return midBand, upBand, loBand
 
-    def __feature_CCI(self, index: int, aggregation: int):
+    def __feature_CCI(self, index: int, aggregation: int, intervals=20):
         tp_list = []
 
-        for i in range(index - 20 * aggregation, index - aggregation, aggregation):
+        for i in range(index - intervals * aggregation, index - aggregation, aggregation):
             close = self.interval_data.iloc[i - aggregation:i]['close_value'].mean()
             high = self.interval_data.iloc[i - aggregation:i]['high'].max()
             low = self.interval_data.iloc[i - aggregation:i]['low'].min()
@@ -347,6 +356,39 @@ class Aggregator:
         md_tp = statistics.stdev(tp_list)
 
         return (current_tp - avg_tp) / (0.015 * md_tp)
+
+    def __feature_STOCH(self, index: int, aggregation: int, intervals=20):
+        n_periods = self.interval_data.iloc[index - intervals * aggregation: index - aggregation]
+        lowestLow = n_periods['close_value'].min()
+        higestHigh = n_periods['close_value'].max()
+
+        return (self.interval_data.iloc[index - aggregation:index]['close_value'].mean() - lowestLow) / (
+                higestHigh - lowestLow)
+
+    def __feature_AROON(self, index: int, aggregation: int, intervals=20):
+        max_value = -9999
+        min_value = 9999
+        max_dist = 0
+        min_dist = 0
+
+        for i in range(index - intervals * aggregation, index - aggregation, aggregation):
+            close = self.interval_data.iloc[i - aggregation:i]['close_value'].mean()
+            if close > max_value:
+                max_value = close
+                max_dist = 0
+            else:
+                max_dist += 1
+
+            if close < min_value:
+                min_value = close
+                min_dist = 0
+            else:
+                min_dist += 1
+
+        aroon_up = 100 * ((intervals - max_dist) / intervals)
+        aroon_down = 100 * ((intervals - min_dist) / intervals)
+
+        return aroon_up, aroon_down
 
     def compute_moving_average(self, data: pd.DataFrame, index: int, aggregation: int, size: int):
         ma_data = data.iloc[index - (size * aggregation):index]

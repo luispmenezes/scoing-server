@@ -11,10 +11,10 @@ from keras.models import model_from_json
 from sklearn.externals import joblib
 from sklearn.preprocessing import MinMaxScaler
 
-csv_collumns = ['close_value', 'high_low_swing', 'price_swing', 'close_mdev_20', 'close_mdev_100', 'close_oscillator',
-                'volume_mdev_20', 'volume_mdev_100', 'volume_oscillator', 'trades_mdev_20', 'trades_mdev_100',
-                'trades_oscillator', 'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi', 'bb_band_range',
-                'bb_up_mdev', 'bb_lo_mdev', 'prediction']
+csv_collumns = ['open_time', 'close_value', 'high_low_swing', 'price_swing', 'close_mdev_20', 'close_mdev_100',
+                'close_oscillator', 'volume_mdev_20', 'volume_mdev_100', 'volume_oscillator', 'trades_mdev_20',
+                'trades_mdev_100', 'trades_oscillator', 'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi',
+                'cci', 'bb_band_range', 'bb_up_mdev', 'bb_lo_mdev', 'stoch', 'aroon_up', 'aroon_down', 'prediction']
 coin_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "LTCUSDT", "XRPUSDT"]
 num_features = len(csv_collumns) - 1
 
@@ -93,7 +93,7 @@ class Predictor:
         else:
             return self.get_training_from_server(coins, aggregation, True)
 
-    def train_model(self, aggregation, dataframe, epochs=250, batch_size=1000):
+    def train_model(self, aggregation, dataframe, epochs=150, batch_size=1024):
         self.logger.info("Training model for %d" % aggregation)
 
         self.logger.debug("Shuffling dataset...")
@@ -143,12 +143,12 @@ class Predictor:
         model.add(Dense(10, activation='relu'))
         model.add(Dense(1))
         model.compile(loss='mean_squared_error', optimizer='adam',
-                      metrics=['mae', 'acc'])
+                      metrics=['mae'])
         model.fit(x_train, y_train, epochs=epochs, verbose=2, validation_data=(x_validation, y_validation),
                   batch_size=batch_size)
 
-        loss, mae, acc = model.evaluate(x_test, y_test, verbose=2)
-        self.logger.info("Testing loss: %d, mae:%d, acc: %d" % (loss, mae, acc))
+        loss = model.evaluate(x_test, y_test, verbose=2)
+        self.logger.info("Testing loss: %f  MeanAbsError: %f" % (loss[0], loss[1]))
 
         self.save_model_files(aggregation, model, scaler_X, scaler_Y)
 
