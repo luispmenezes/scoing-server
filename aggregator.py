@@ -39,8 +39,13 @@ class Aggregator:
 
     def training_data_get_latest_timestamp(self, coin, aggregation):
         self.cursor.execute(
-            "SELECT MAX(open_time) FROM cointron.training_data WHERE coin=%s AND aggregation=%s", (coin, aggregation))
-        return self.cursor.fetchone()[0]
+            "SELECT MAX(open_time), MAX(idx)  FROM cointron.training_data WHERE coin=%s AND aggregation=%s",
+            (coin, aggregation))
+        result = self.cursor.fetchone()
+        if result is None:
+            return None, None
+        else:
+            return result[0], result[1]
 
     def data_latest_ts(self, coin):
         self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
@@ -49,18 +54,19 @@ class Aggregator:
     def update_training_data(self):
         for aggregation in aggregation_list:
             for coin in binance.get_coin_list():
-                latest_data_timestamp, latest_index = self.interval_data_latest_ts(coin)
-                latest_training_timestamp = self.training_data_get_latest_timestamp(coin, aggregation)
-                if latest_data_timestamp is not None:
-                    if latest_training_timestamp is None:
+                latest_data_timestamp, latest_data_index = self.interval_data_latest_ts(coin)
+                latest_training_timestamp, latest_training_index = self.training_data_get_latest_timestamp(coin,
+                                                                                                           aggregation)
+                if latest_data_index is not None:
+                    if latest_training_index is None:
                         self.logger.info("Creating training data from scratch (%s,%d)..." % (coin, aggregation))
-                        latest_training_timestamp = binance.get_exchange_startime()
+                        self.generate_training_data(coin, aggregation, 0)
                     else:
                         self.logger.info("Updating Training Data for %s,%d from %s to %s" % (
                             coin, aggregation, latest_training_timestamp,
                             latest_data_timestamp))
-                    self.generate_training_data(coin, aggregation, latest_training_timestamp.replace(tzinfo=pytz.UTC),
-                                                latest_data_timestamp.replace(tzinfo=pytz.UTC))
+                        self.generate_training_data(coin, aggregation,
+                                                    max(latest_training_index - (aggregation * 100), 0))
 
     def get_training_data(self, coins, aggregation, start_time, end_time):
         self.cursor.execute(
@@ -210,27 +216,29 @@ class Aggregator:
             else:
                 self.conn.commit()
 
-    def generate_training_data(self, coin: str, aggregation: int, start_time, end_time):
+    def generate_training_data(self, coin: str, aggregation: int, start_idx: int):
         self.cursor.execute(
             "SELECT idx,open_time,open_value,high,low,close_value,volume,trades,taker_buy_asset_volume " +
-            "FROM cointron.binance_intervals WHERE coin=%s AND open_time >= %s  AND end_time <= %s ORDER BY idx ASC",
-            (coin, start_time, end_time))
+            "FROM cointron.binance_intervals WHERE coin=%s AND idx >= %s ORDER BY idx ASC",
+            (coin, start_idx))
 
         self.interval_data = pd.DataFrame(self.cursor.fetchall(),
                                           columns=["idx", "open_time", "open_value", "high", "low", "close_value",
                                                    "volume", "trades", "taker_buy_asset_volume"])
         training_data = []
 
-        for i in range(100 * aggregation, self.interval_data.shape[0], aggregation):
+        for i in range(100 * aggregation, self.interval_data.shape[0] - aggregation):
             training_entry = self.compute_features(i, aggregation)
             prediction = float(self.interval_data.loc[self.interval_data['idx'] == i + aggregation]['close_value'])
             current_interval = self.interval_data.iloc[i]
             training_data.append(
-                (coin, aggregation, current_interval['open_time'], current_interval['close_value']) + training_entry + (
+                (coin, aggregation, i - (100 * aggregation), current_interval['open_time'],
+                 current_interval['close_value']) + training_entry + (
                     (prediction / current_interval['close_value']) - 1.0,))
 
             if len(training_data) % 1000 == 0:
-                self.logger.info("Training Data (%s) progress: %.2f %%" % (coin, (i / self.interval_data.shape[0]) * 100))
+                self.logger.info(
+                    "Training Data (%s) progress: %.2f %%" % (coin, (i / self.interval_data.shape[0]) * 100))
                 insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(['%s'] * len(training_data))
 
                 if len(training_data) > 0:
@@ -244,11 +252,11 @@ class Aggregator:
                         self.conn.commit()
                         training_data.clear()
 
-    def compute_features(self, index: int, aggregation: int):
-        ma20 = self.compute_moving_average(self.interval_data, index, aggregation, 100)
-        ma100 = self.compute_moving_average(self.interval_data, index, aggregation, 20)
+    def compute_features(self, data_idx: int, aggregation: int):
+        ma20 = self.compute_moving_average(self.interval_data, data_idx, aggregation, 100)
+        ma100 = self.compute_moving_average(self.interval_data, data_idx, aggregation, 20)
 
-        agg_data = self.interval_data.iloc[index - aggregation:index]
+        agg_data = self.interval_data.iloc[data_idx - aggregation:data_idx]
 
         high = agg_data['high'].max()
         low = agg_data['low'].min()
@@ -276,9 +284,9 @@ class Aggregator:
         tbav_mdev_100 = abs(tbav - ma100[3]) / ma100[3]
         tbav_oscillator = ma100[3] / ma20[3]
 
-        rsi = self.__feature_RSI(index, aggregation)
-        cci = self.__feature_CCI(index, aggregation)
-        abs_mid_band, abs_up_band, abs_lo_band = self.__feature_bollinger_bands(index, aggregation)
+        rsi = self.__feature_RSI(data_idx, aggregation)
+        cci = self.__feature_CCI(data_idx, aggregation)
+        abs_mid_band, abs_up_band, abs_lo_band = self.__feature_bollinger_bands(data_idx, aggregation)
         bb_up_mdev = abs(abs_up_band - close) / close
         bb_lo_mdev = abs(abs_lo_band - close) / close
 
