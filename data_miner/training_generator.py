@@ -7,12 +7,12 @@ import psycopg2
 from psycopg2 import pool
 
 import binance
-from collector import Collector
+from data_miner.rawdata_collector import RawDataCollector
 
 aggregation_list = {5, 10, 100}
 
 
-class Aggregator:
+class TrainingGenerator:
 
     def __init__(self, db_host, db_port, db_name, db_user, db_password, logger):
         try:
@@ -59,8 +59,7 @@ class Aggregator:
         for aggregation in aggregation_list:
             for coin in binance.get_coin_list():
                 latest_data_timestamp, latest_data_index = self.interval_data_latest_ts(coin)
-                latest_training_timestamp = self.training_data_get_latest_timestamp(coin,
-                                                                                    aggregation)
+                latest_training_timestamp = self.training_data_get_latest_timestamp(coin, aggregation)
                 if latest_data_timestamp is not None:
                     if latest_training_timestamp is None:
                         self.logger.info("Creating training data from scratch (%s,%d)..." % (coin, aggregation))
@@ -99,7 +98,7 @@ class Aggregator:
             "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
             (coin, timestamp - timedelta(minutes=10 * aggregation), timestamp))
 
-        df = pd.DataFrame(self.cursor.fetchall(), columns=Collector.data_collumns())
+        df = pd.DataFrame(self.cursor.fetchall(), columns=RawDataCollector.data_collumns())
 
         return pd.DataFrame([self.training_worker(coin, aggregation, df, df.shape[0] - 1, False)],
                             columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
@@ -114,7 +113,7 @@ class Aggregator:
     def trader_training_data(self, coins, start_time, end_time):
         result = None
 
-        for agg in Aggregator.get_aggregations():
+        for agg in TrainingGenerator.get_aggregations():
             if result is None:
                 self.cursor.execute(
                     "SELECT open_time,coin,close_value,prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",

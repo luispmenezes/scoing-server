@@ -8,21 +8,21 @@ import pandas as pd
 import pytz
 from flask import Flask, jsonify, request
 
-from aggregator import Aggregator
-from collector import Collector
-from interval import IntervalCalculator
+from data_miner.training_generator import TrainingGenerator
+from data_miner.rawdata_collector import RawDataCollector
+from data_miner.interval_calculator import IntervalCalculator
 from predictor import Predictor
 
 log_format = '[%(asctime)s] [%(levelname)s] - %(name)s: %(message)s'
 logging.basicConfig(level=logging.DEBUG, format=log_format)
 logger = logging.getLogger("Main")
 
-collector = Collector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
+collector = RawDataCollector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
                       'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
                       'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C',
-                      logging.getLogger("Collector"))
-aggregator = Aggregator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
-                        logging.getLogger("Aggregator"))
+                             logging.getLogger("Collector"))
+aggregator = TrainingGenerator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
+                               logging.getLogger("Aggregator"))
 intervalCalculator = IntervalCalculator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
                                         logging.getLogger("Aggregator"))
 predictor = Predictor(aggregator, logging.getLogger("Predictor"))
@@ -111,7 +111,7 @@ def training_data(coin, aggregation):
 def trader_training(coin):
     coins = (coin,)
     if coin == "*":
-        coins = tuple(Collector.coin_list())
+        coins = tuple(RawDataCollector.coin_list())
 
     start_time = datetime.fromtimestamp(int(request.headers['start_time'])).strftime("%Y/%m/%d %H:%M:%S")
     end_time = datetime.fromtimestamp(int(request.headers['end_time'])).strftime("%Y/%m/%d %H:%M:%S")

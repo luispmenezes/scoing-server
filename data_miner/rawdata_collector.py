@@ -9,7 +9,7 @@ import binance
 aggregations = {15, 60, 1440}
 
 
-class Collector:
+class RawDataCollector:
 
     def __init__(self, db_host, db_port, db_name, db_user, db_password, binance_api_key, binance_api_secret, logger):
         try:

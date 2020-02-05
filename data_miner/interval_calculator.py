@@ -5,7 +5,7 @@ import psycopg2
 import pytz
 
 import binance
-from collector import Collector
+from data_miner.rawdata_collector import RawDataCollector
 from psycopg2 import pool
 
 
@@ -70,7 +70,7 @@ class IntervalCalculator:
             "SELECT * FROM cointron.binance_data WHERE coin = %s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
             (coin, start_time, end_time))
         dataframe = pd.DataFrame(self.cursor.fetchall(),
-                                 columns=Collector.data_collumns())
+                                 columns=RawDataCollector.data_collumns())
 
         self.logger.info("Computing interval data for %d records of %s" % (dataframe.shape[0], coin))
 
