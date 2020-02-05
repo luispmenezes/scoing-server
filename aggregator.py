@@ -1,15 +1,15 @@
+import concurrent.futures
 import statistics
 from datetime import timedelta
 
 import pandas as pd
 import psycopg2
-import pytz
 from psycopg2 import pool
 
 import binance
 from collector import Collector
 
-aggregation_list = {10}
+aggregation_list = {5, 10, 100}
 
 
 class Aggregator:
@@ -46,9 +46,14 @@ class Aggregator:
         else:
             return result[0]
 
-    def data_latest_ts(self, coin):
-        self.cursor.execute("SELECT MAX(open_time) FROM cointron.binance_data WHERE coin=%s", (coin,))
-        return self.cursor.fetchone()[0]
+    def interval_data_latest_ts(self, coin: str):
+        self.cursor.execute(
+            "SELECT MAX(open_time),MAX(idx) FROM cointron.binance_intervals WHERE coin=%s", (coin,))
+        result = self.cursor.fetchone()
+        if result is None:
+            return None, None
+        else:
+            return result[0], result[1]
 
     def update_training_data(self):
         for aggregation in aggregation_list:
@@ -131,94 +136,6 @@ class Aggregator:
     def start_time():
         return binance.get_exchange_startime()
 
-    def interval_data_latest_ts(self, coin: str):
-        self.cursor.execute(
-            "SELECT MAX(open_time),MAX(idx) FROM cointron.binance_intervals WHERE coin=%s", (coin,))
-        result = self.cursor.fetchone()
-        if result is None:
-            return None, None
-        else:
-            return result[0], result[1]
-
-    def update_interval_data(self):
-        for coin in binance.get_coin_list():
-            latest_data_timestamp = self.data_latest_ts(coin)
-            latest_interval_timestamp, latest_interval_index = self.interval_data_latest_ts(coin)
-            if latest_data_timestamp is not None:
-                if latest_interval_timestamp is None:
-                    self.logger.info("Creating interval data from scratch (%s)..." % coin)
-                    latest_interval_timestamp = binance.get_exchange_startime()
-                    latest_interval_index = 0
-                else:
-                    latest_interval_index += 1
-                    latest_interval_timestamp += timedelta(minutes=1)
-                    self.logger.info("Updating Training Data for %s from %s to %s" % (
-                        coin, latest_interval_timestamp, latest_data_timestamp))
-                self.generate_interval_data(coin, latest_interval_timestamp.replace(tzinfo=pytz.UTC),
-                                            latest_data_timestamp.replace(tzinfo=pytz.UTC), latest_interval_index)
-
-    def generate_interval_data(self, coin: str, start_time, end_time, latest_index=0, interval_value=100000):
-
-        self.logger.debug("Grabbing data for %s from %s to %s" % (coin, start_time, end_time))
-
-        self.cursor.execute(
-            "SELECT * FROM cointron.binance_data WHERE coin = %s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
-            (coin, start_time, end_time))
-        dataframe = pd.DataFrame(self.cursor.fetchall(),
-                                 columns=Collector.data_collumns())
-
-        self.logger.info("Computing interval data for %d records of %s" % (dataframe.shape[0], coin))
-
-        interval_total = 0
-        last_idx = 0
-        interval_data = []
-
-        for idx in range(dataframe.shape[0]):
-            interval_total += dataframe.iloc[idx]["quote_asset_volume"]
-            if interval_total > interval_value:
-                start_time = dataframe.iloc[last_idx]["open_time"]
-                end_time = dataframe.iloc[idx]["open_time"]
-                open_value = dataframe.iloc[last_idx]['open_value']
-                close_value = dataframe.iloc[idx]['close_value']
-                high = dataframe.iloc[last_idx:idx]['high'].max()
-                low = dataframe.iloc[last_idx:idx]['low'].min()
-                volume = dataframe.iloc[last_idx:idx]['volume'].sum()
-                trades = int(dataframe.iloc[last_idx:idx]['trades'].sum())
-                taker_buy_asset_volume = dataframe.iloc[last_idx:idx]['taker_buy_base_asset_volume'].sum()
-                interval_data.append(
-                    (coin, latest_index, start_time, end_time, open_value, close_value, high, low, volume, trades,
-                     taker_buy_asset_volume))
-                latest_index += 1
-                last_idx = idx
-                interval_total = 0
-
-                if len(interval_data) % 10000 == 0:
-                    self.logger.info("Interval (%s) progress: %.2f %%" % (coin, (idx / dataframe.shape[0]) * 100))
-                    insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(
-                        ['%s'] * len(interval_data))
-
-                    try:
-                        self.cursor.execute(insert_query, interval_data)
-                    except psycopg2.ProgrammingError as e:
-                        self.logger.info("Failed to insert interval data (rolling back) ", e)
-                        self.conn.rollback()
-                        exit(-1)
-                    else:
-                        self.conn.commit()
-                        interval_data.clear()
-
-        insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(['%s'] * len(interval_data))
-
-        if len(interval_data) > 0:
-            try:
-                self.cursor.execute(insert_query, interval_data)
-            except psycopg2.ProgrammingError as e:
-                self.logger.info("Failed to insert interval data (rolling back) ", e)
-                self.conn.rollback()
-                exit(-1)
-            else:
-                self.conn.commit()
-
     def generate_training_data(self, coin: str, aggregation: int, start_idx):
 
         self.logger.debug("Generating training data (%s,%d) from idx %s" % (coin, aggregation, start_idx))
@@ -232,31 +149,44 @@ class Aggregator:
                                           columns=["idx", "open_time", "open_value", "high", "low", "close_value",
                                                    "volume", "trades", "taker_buy_asset_volume"])
         training_data = []
+        num_workers = 1
 
-        for i in range(100 * aggregation, self.interval_data.shape[0] - aggregation):
-            training_entry = self.compute_features(i, aggregation)
-            prediction = float(self.interval_data.iloc[i + aggregation]['close_value'])
-            current_interval = self.interval_data.iloc[i]
-            training_data.append(
-                (coin, aggregation, current_interval['open_time'],
-                 current_interval['close_value']) + training_entry + (
-                    (prediction / current_interval['close_value']) - 1.0,))
+        for i in range(100 * aggregation, self.interval_data.shape[0] - aggregation, num_workers):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+                workers = []
 
-            if len(training_data) % 1000 == 0:
-                self.logger.info(
-                    "Training Data (%s) progress: %.2f %%" % (coin, (i / self.interval_data.shape[0]) * 100))
-                insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(['%s'] * len(training_data))
+                for thread_idx in range(i, min(i + num_workers, self.interval_data.shape[0] - aggregation)):
+                    workers.append(executor.submit(self.training_worker, i, aggregation, coin))
 
-                if len(training_data) > 0:
-                    try:
-                        self.cursor.execute(insert_query, training_data)
-                    except psycopg2.ProgrammingError as e:
-                        self.logger.info("Failed to insert interval data (rolling back) ", e)
-                        self.conn.rollback()
-                        exit(-1)
-                    else:
-                        self.conn.commit()
-                        training_data.clear()
+                for w in concurrent.futures.as_completed(workers):
+                    if w.result() is not None:
+                        training_data.append(w.result())
+
+                if (len(training_data) % 1000 == 0 or i + num_workers > self.interval_data.shape[0] - aggregation) \
+                        and len(training_data) > 0:
+                    self.logger.info(
+                        "Training Data (%s) progress: %.2f %%" % (coin, (i / self.interval_data.shape[0]) * 100))
+                    insert_query = "INSERT INTO cointron.training_data VALUES" + ','.join(['%s'] * len(training_data)) \
+                                   + " ON CONFLICT DO NOTHING"
+
+                    if len(training_data) > 0:
+                        try:
+                            self.cursor.execute(insert_query, training_data)
+                        except psycopg2.ProgrammingError as e:
+                            self.logger.info("Failed to insert interval data (rolling back) ", e)
+                            self.conn.rollback()
+                            exit(-1)
+                        else:
+                            self.conn.commit()
+                            training_data.clear()
+
+    def training_worker(self, i: int, aggregation: int, coin: str):
+        training_entry = self.compute_features(i, aggregation)
+        prediction = float(self.interval_data.iloc[i + aggregation]['close_value'])
+        current_interval = self.interval_data.iloc[i]
+
+        return (coin, aggregation, current_interval['open_time'], current_interval['close_value']) + training_entry + (
+            (prediction / current_interval['close_value']) - 1.0,)
 
     def compute_features(self, data_idx: int, aggregation: int):
         ma20 = self.compute_moving_average(self.interval_data, data_idx, aggregation, 100)

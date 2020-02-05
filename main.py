@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request
 
 from aggregator import Aggregator
 from collector import Collector
+from interval import IntervalCalculator
 from predictor import Predictor
 
 log_format = '[%(asctime)s] [%(levelname)s] - %(name)s: %(message)s'
@@ -22,6 +23,8 @@ collector = Collector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tri
                       logging.getLogger("Collector"))
 aggregator = Aggregator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
                         logging.getLogger("Aggregator"))
+intervalCalculator = IntervalCalculator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
+                                        logging.getLogger("Aggregator"))
 predictor = Predictor(aggregator, logging.getLogger("Predictor"))
 
 app = Flask(__name__)
@@ -35,6 +38,19 @@ def update_data_worker():
         except Exception as e:
             try:
                 logger.info("Collector failed (now reconnecting)", e)
+                collector.connect_to_db()
+            except:
+                sleep(120)
+
+
+def update_interval_worker():
+    while True:
+        try:
+            intervalCalculator.update_interval_data()
+            sleep(10)
+        except Exception as e:
+            try:
+                logger.info("Interval calculation failed (now reconnecting)", e)
                 collector.connect_to_db()
             except:
                 sleep(120)
@@ -84,7 +100,7 @@ def predict(aggregation):
 
 @app.route('/aggregator/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
-    #TODO: varias coins
+    # TODO: varias coins
     df = aggregator.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
     response = flask.make_response(df.to_json(orient="records"))
     response.headers['content-type'] = 'application/json'
@@ -118,10 +134,12 @@ def latest_data(coin, aggregation):
 if __name__ == '__main__':
     logging.info("Startup completed")
     update_data_thread = Thread(target=update_data_worker)
+    update_interval_thread = Thread(target=update_interval_worker)
     update_training_thread = Thread(target=update_training_worker)
     predictor_thread = Thread(target=predictor_worker)
 
     update_data_thread.start()
+    update_interval_thread.start()
     update_training_thread.start()
     # predictor_thread.start()
 
