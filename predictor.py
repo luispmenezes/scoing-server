@@ -93,7 +93,7 @@ class Predictor:
         else:
             return self.get_training_from_server(coins, aggregation, True)
 
-    def train_model(self, aggregation, dataframe, epochs=150, batch_size=1024):
+    def train_model(self, aggregation, dataframe, epochs=50, batch_size=1000):
         self.logger.info("Training model for %d" % aggregation)
 
         self.logger.debug("Shuffling dataset...")

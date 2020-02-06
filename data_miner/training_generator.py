@@ -1,13 +1,11 @@
 import concurrent.futures
 import statistics
-from datetime import timedelta
 
 import pandas as pd
 import psycopg2
 from psycopg2 import pool
 
 import binance
-from data_miner.rawdata_collector import RawDataCollector
 
 aggregation_list = {5, 10, 100}
 
@@ -35,6 +33,14 @@ class TrainingGenerator:
                                                        host=self.db_host, port=self.db_port, database=self.db_name)
         self.conn = self.pool.getconn()
         self.cursor = self.conn.cursor()
+
+    @staticmethod
+    def get_training_features():
+        return ['open_time', 'close_value', 'high_low_swing', 'price_swing', 'close_mdev_20',
+                'close_mdev_100', 'close_oscillator', 'volume_mdev_20', 'volume_mdev_100',
+                'volume_oscillator', 'trades_mdev_20', 'trades_mdev_100', 'trades_oscillator',
+                'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi', 'cci', 'bb_band_range',
+                'bb_up_mdev', 'bb_lo_mdev', 'stoch', 'aroon_up', 'aroon_down']
 
     def training_data_get_latest_timestamp(self, coin, aggregation):
         self.cursor.execute(
@@ -92,19 +98,15 @@ class TrainingGenerator:
                                      'bb_up_mdev', 'bb_lo_mdev', 'stoch', 'aroon_up', 'aroon_down', 'prediction'])
 
     def get_latest_prediction_data(self, coin, aggregation):
-        timestamp = self.data_latest_ts(coin)
-
         self.cursor.execute(
-            "SELECT * FROM cointron.binance_data WHERE coin=%s AND open_time >= %s AND open_time <= %s ORDER BY open_time ASC",
-            (coin, timestamp - timedelta(minutes=10 * aggregation), timestamp))
+            "SELECT idx,open_time,open_value,high,low,close_value,volume,trades,taker_buy_asset_volume " +
+            "FROM cointron.binance_intervals WHERE coin=%s ORDER BY idx DESC LIMIT %s", (coin, (aggregation + 1) * 100))
 
-        df = pd.DataFrame(self.cursor.fetchall(), columns=RawDataCollector.data_collumns())
+        self.interval_data = pd.DataFrame(self.cursor.fetchall(),
+                                          columns=["idx", "open_time", "open_value", "high", "low", "close_value",
+                                                   "volume", "trades", "taker_buy_asset_volume"])
 
-        return pd.DataFrame([self.training_worker(coin, aggregation, df, df.shape[0] - 1, False)],
-                            columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
-                                     'quote_asset_volume',
-                                     'trades', 'taker_buy_base_asset_volume',
-                                     'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
+        return self.training_worker(self.interval_data.shape[0] - 1, aggregation, coin, False)
 
     @staticmethod
     def get_aggregations():
@@ -179,17 +181,18 @@ class TrainingGenerator:
                             self.conn.commit()
                             training_data.clear()
 
-    def training_worker(self, i: int, aggregation: int, coin: str):
-        training_entry = self.compute_features(i, aggregation)
-        prediction = float(self.interval_data.iloc[i + aggregation]['close_value'])
+    def training_worker(self, i: int, aggregation: int, coin: str, with_prediction=True):
+        features = self.compute_features(i, aggregation)
         current_interval = self.interval_data.iloc[i]
-
-        return (coin, aggregation, current_interval['open_time'], current_interval['close_value']) + training_entry + (
-            (prediction / current_interval['close_value']) - 1.0,)
+        training_entry = (coin, aggregation, current_interval['open_time'], current_interval['close_value']) + features
+        if with_prediction:
+            prediction = float(self.interval_data.iloc[i + aggregation]['close_value'])
+            training_entry += ((prediction / current_interval['close_value']) - 1.0,)
+        return training_entry
 
     def compute_features(self, data_idx: int, aggregation: int):
-        ma20 = self.compute_moving_average(self.interval_data, data_idx, aggregation, 100)
-        ma100 = self.compute_moving_average(self.interval_data, data_idx, aggregation, 20)
+        ma20 = self.compute_moving_average(data_idx, aggregation, 100)
+        ma100 = self.compute_moving_average(data_idx, aggregation, 20)
 
         agg_data = self.interval_data.iloc[data_idx - aggregation:data_idx]
 
@@ -319,8 +322,8 @@ class TrainingGenerator:
 
         return aroon_up, aroon_down
 
-    def compute_moving_average(self, data: pd.DataFrame, index: int, aggregation: int, size: int):
-        ma_data = data.iloc[index - (size * aggregation):index]
+    def compute_moving_average(self, index: int, aggregation: int, size: int):
+        ma_data = self.interval_data.iloc[index - (size * aggregation):index]
         ma_price = ma_data['close_value'].sum() / size
         ma_volume = ma_data['volume'].sum() / size
         ma_trades = ma_data['trades'].sum() / size

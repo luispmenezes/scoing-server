@@ -18,8 +18,8 @@ logging.basicConfig(level=logging.DEBUG, format=log_format)
 logger = logging.getLogger("Main")
 
 collector = RawDataCollector("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
-                      'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
-                      'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C',
+                             'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
+                             'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C',
                              logging.getLogger("Collector"))
 aggregator = TrainingGenerator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
                                logging.getLogger("Aggregator"))
@@ -60,7 +60,7 @@ def update_training_worker():
     while True:
         try:
             aggregator.update_training_data()
-            sleep(120)
+            sleep(10)
         except Exception as e:
             try:
                 logger.info("Aggregator failed (now reconnecting)", e)
@@ -87,9 +87,7 @@ def latest_prediction(coin):
 
 @app.route('/predictor/predict/<int:aggregation>', methods=['POST'])
 def predict(aggregation):
-    data = pd.DataFrame(request.json, columns=['open_time', 'open_value', 'high', 'low', 'close_value', 'volume',
-                                               'quote_asset_volume', 'trades', 'taker_buy_base_asset_volume',
-                                               'taker_buy_quote_asset_volume', 'ma5', 'ma10'])
+    data = pd.DataFrame(request.json, columns=TrainingGenerator.get_training_features())
     logger.info(data)
     predictions = predictor.predict(data, aggregation)
     for ts in predictions:
