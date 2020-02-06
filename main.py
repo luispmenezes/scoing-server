@@ -21,11 +21,11 @@ collector = RawDataCollector("menz.dynip.sapo.pt", "5433", "postgres", "postgres
                              'PNGEa0YJLxVmPZssX9hDKwu3lhRQmjsyH4bpDTBg7zM2NYYCDoGAR7vtZfQorq8k',
                              'kseCG5XF731dbVAwZJHmT3g0po6NjedqyBvUohCnUcZlXhQjxk4B6q4A0jHRfW4C',
                              logging.getLogger("Collector"))
-aggregator = TrainingGenerator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
-                               logging.getLogger("Aggregator"))
+training = TrainingGenerator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
+                             logging.getLogger("Training"))
 intervalCalculator = IntervalCalculator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
                                         logging.getLogger("Aggregator"))
-predictor = Predictor(aggregator, logging.getLogger("Predictor"))
+predictor = Predictor(training, logging.getLogger("Intervals"))
 
 app = Flask(__name__)
 
@@ -59,12 +59,12 @@ def update_interval_worker():
 def update_training_worker():
     while True:
         try:
-            aggregator.update_training_data()
+            training.update_training_data()
             sleep(10)
         except Exception as e:
             try:
                 logger.info("Aggregator failed (now reconnecting)", e)
-                aggregator.connect_to_db()
+                training.connect_to_db()
             except:
                 sleep(120)
 
@@ -99,7 +99,7 @@ def predict(aggregation):
 @app.route('/aggregator/training/<string:coin>/<int:aggregation>', methods=['GET'])
 def training_data(coin, aggregation):
     # TODO: varias coins
-    df = aggregator.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
+    df = training.get_training_data(coin, aggregation, end_time=datetime.utcnow().replace(tzinfo=pytz.UTC))
     response = flask.make_response(df.to_json(orient="records"))
     response.headers['content-type'] = 'application/json'
     return response
@@ -114,7 +114,7 @@ def trader_training(coin):
     start_time = datetime.fromtimestamp(int(request.headers['start_time'])).strftime("%Y/%m/%d %H:%M:%S")
     end_time = datetime.fromtimestamp(int(request.headers['end_time'])).strftime("%Y/%m/%d %H:%M:%S")
 
-    df = aggregator.trader_training_data(coins, start_time, end_time)
+    df = training.trader_training_data(coins, start_time, end_time)
     response = flask.make_response(df.to_json(orient="records"))
     response.headers['content-type'] = 'application/json'
     return response
@@ -122,8 +122,7 @@ def trader_training(coin):
 
 @app.route('/collector/data/latest/<string:coin>/<int:aggregation>', methods=['GET'])
 def latest_data(coin, aggregation):
-    df = aggregator.get_latest_prediction_data(coin, aggregation)
-    # return jsonify({'timestamp': timestamp, 'data': df.to_json(orient="records")})
+    df = training.get_latest_prediction_data(coin, aggregation)
     response = flask.make_response(df.to_json(orient="records"))
     response.headers['content-type'] = 'application/json'
     return response
