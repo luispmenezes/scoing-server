@@ -112,7 +112,7 @@ class IntervalCalculator:
                         self.conn.commit()
                         interval_data.clear()
 
-        insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(['%s'] * len(interval_data))
+        insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(['%s'] * len(interval_data)) + " ON CONFLICT DO NOTHING"
 
         if len(interval_data) > 0:
             try:

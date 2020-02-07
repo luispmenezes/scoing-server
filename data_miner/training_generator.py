@@ -106,7 +106,13 @@ class TrainingGenerator:
                                           columns=["idx", "open_time", "open_value", "high", "low", "close_value",
                                                    "volume", "trades", "taker_buy_asset_volume"])
 
-        return self.training_worker(self.interval_data.shape[0] - 1, aggregation, coin, False)
+        return pd.DataFrame([self.training_worker(self.interval_data.shape[0] - 1, aggregation, coin, False)],
+                            columns=['coin', 'aggregation', 'open_time', 'close_value', 'high_low_swing', 'price_swing',
+                                     'close_mdev_20', 'close_mdev_100', 'close_oscillator', 'volume_mdev_20',
+                                     'volume_mdev_100', 'volume_oscillator', 'trades_mdev_20', 'trades_mdev_100',
+                                     'trades_oscillator', 'tbav_mdev_20', 'tbav_mdev_100', 'tbav_oscillator', 'rsi',
+                                     'cci', 'bb_band_range', 'bb_up_mdev', 'bb_lo_mdev', 'stoch', 'aroon_up',
+                                     'aroon_down'])
 
     @staticmethod
     def get_aggregations():
