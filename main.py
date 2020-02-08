@@ -12,6 +12,7 @@ from data_miner.training_generator import TrainingGenerator
 from data_miner.rawdata_collector import RawDataCollector
 from data_miner.interval_calculator import IntervalCalculator
 from predictor import Predictor
+from trader_manager import TraderManager
 
 log_format = '[%(asctime)s] [%(levelname)s] - %(name)s: %(message)s'
 logging.basicConfig(level=logging.DEBUG, format=log_format)
@@ -26,6 +27,8 @@ training = TrainingGenerator("menz.dynip.sapo.pt", "5433", "postgres", "postgres
 intervalCalculator = IntervalCalculator("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123",
                                         logging.getLogger("Aggregator"))
 predictor = Predictor(training, logging.getLogger("Intervals"))
+trader_manager = TraderManager("menz.dynip.sapo.pt", "5433", "postgres", "postgres", "tripa123", predictor, training,
+                               logging.getLogger("Trader-Manager"))
 
 app = Flask(__name__)
 
@@ -114,7 +117,11 @@ def trader_training(coin):
     start_time = datetime.fromtimestamp(int(request.headers['start_time'])).strftime("%Y/%m/%d %H:%M:%S")
     end_time = datetime.fromtimestamp(int(request.headers['end_time'])).strftime("%Y/%m/%d %H:%M:%S")
 
-    df = training.trader_training_data(coins, start_time, end_time)
+    if 'use_model' in request.headers and request.headers['use_model'] == 'true':
+        df = trader_manager.get_training_data(coins, start_time, end_time)
+    else:
+        df = training.trader_training_data(coins, start_time, end_time)
+    df['open_time'] = df['open_time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
     response = flask.make_response(df.to_json(orient="records"))
     response.headers['content-type'] = 'application/json'
     return response

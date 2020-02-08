@@ -1,11 +1,13 @@
 import concurrent.futures
 import statistics
+import datetime
 
 import pandas as pd
 import psycopg2
+import pytz
 from psycopg2 import pool
 
-import binance
+from data_miner import binance
 
 aggregation_list = {5, 10, 100}
 
@@ -82,7 +84,8 @@ class TrainingGenerator:
                         self.generate_training_data(coin, aggregation,
                                                     max(self.cursor.fetchone()[0] - (aggregation * 99), 0))
 
-    def get_training_data(self, coins, aggregation, start_time, end_time):
+    def get_training_data(self, coins, aggregation, start_time=datetime.datetime(2017, 8, 17, 4, 0, tzinfo=pytz.UTC),
+                          end_time=datetime.datetime(2099, 1, 1, 0, 0, tzinfo=pytz.UTC)):
         self.cursor.execute(
             "SELECT open_time,close_value,high_low_swing,price_swing,close_mdev_20,close_mdev_100,close_oscillator," +
             "volume_mdev_20,volume_mdev_100,volume_oscillator,trades_mdev_20,trades_mdev_100,trades_oscillator," +
@@ -116,7 +119,7 @@ class TrainingGenerator:
 
     @staticmethod
     def get_aggregations():
-        return aggregation_list
+        return sorted(aggregation_list)
 
     def trader_training_data(self, coins, start_time, end_time):
         result = None
@@ -129,7 +132,6 @@ class TrainingGenerator:
 
                 result = pd.DataFrame(self.cursor.fetchall(),
                                       columns=['open_time', 'coin', 'close_value', 'pred_' + str(agg)])
-                result['open_time'] = result['open_time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
             else:
                 self.cursor.execute(
                     "SELECT prediction FROM cointron.training_data WHERE coin IN %s AND open_time >= %s AND open_time <= %s AND aggregation = %s ORDER BY open_time ASC",
@@ -197,6 +199,7 @@ class TrainingGenerator:
         return training_entry
 
     def compute_features(self, data_idx: int, aggregation: int):
+        #TODO: fix and recalculate training data
         ma20 = self.compute_moving_average(data_idx, aggregation, 100)
         ma100 = self.compute_moving_average(data_idx, aggregation, 20)
 

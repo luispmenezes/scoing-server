@@ -4,7 +4,7 @@ import psycopg2
 import pytz
 from psycopg2 import pool
 
-import binance
+from data_miner import binance
 
 aggregations = {15, 60, 1440}
 

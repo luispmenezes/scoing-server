@@ -4,7 +4,7 @@ import pandas as pd
 import psycopg2
 import pytz
 
-import binance
+from data_miner import binance
 from data_miner.rawdata_collector import RawDataCollector
 from psycopg2 import pool
 
@@ -85,11 +85,11 @@ class IntervalCalculator:
                 end_time = dataframe.iloc[idx]["open_time"]
                 open_value = dataframe.iloc[last_idx]['open_value']
                 close_value = dataframe.iloc[idx]['close_value']
-                high = dataframe.iloc[last_idx:idx+1]['high'].max()
-                low = dataframe.iloc[last_idx:idx+1]['low'].min()
-                volume = dataframe.iloc[last_idx:idx+1]['volume'].sum()
-                trades = int(dataframe.iloc[last_idx:idx+1]['trades'].sum())
-                taker_buy_asset_volume = dataframe.iloc[last_idx:idx+1]['taker_buy_base_asset_volume'].sum()
+                high = dataframe.iloc[last_idx:idx + 1]['high'].max()
+                low = dataframe.iloc[last_idx:idx + 1]['low'].min()
+                volume = dataframe.iloc[last_idx:idx + 1]['volume'].sum()
+                trades = int(dataframe.iloc[last_idx:idx + 1]['trades'].sum())
+                taker_buy_asset_volume = dataframe.iloc[last_idx:idx + 1]['taker_buy_base_asset_volume'].sum()
                 interval_data.append(
                     (coin, latest_index, start_time, end_time, open_value, close_value, high, low, volume, trades,
                      taker_buy_asset_volume))
@@ -112,7 +112,8 @@ class IntervalCalculator:
                         self.conn.commit()
                         interval_data.clear()
 
-        insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(['%s'] * len(interval_data)) + " ON CONFLICT DO NOTHING"
+        insert_query = "INSERT INTO cointron.binance_intervals VALUES" + ','.join(
+            ['%s'] * len(interval_data)) + " ON CONFLICT DO NOTHING"
 
         if len(interval_data) > 0:
             try:
@@ -123,3 +124,32 @@ class IntervalCalculator:
                 exit(-1)
             else:
                 self.conn.commit()
+
+    def get_latest_interval(self, coin: str, num_records: int, interval_value=100000):
+        self.cursor.execute(
+            "SELECT * FROM cointron.binance_data WHERE coin=%s ORDER BY open_time DESC LIMIT %s", (coin, num_records))
+        dataframe = pd.DataFrame(self.cursor.fetchall(), columns=RawDataCollector.data_collumns())
+
+        interval_total = 0
+        last_idx = 0
+        interval_data = []
+
+        for idx in range(dataframe.shape[0]):
+            interval_total += dataframe.iloc[idx]["quote_asset_volume"]
+            if interval_total > interval_value:
+                start_time = dataframe.iloc[last_idx]["open_time"]
+                end_time = dataframe.iloc[idx]["open_time"]
+                open_value = dataframe.iloc[last_idx]['open_value']
+                close_value = dataframe.iloc[idx]['close_value']
+                high = dataframe.iloc[last_idx:idx + 1]['high'].max()
+                low = dataframe.iloc[last_idx:idx + 1]['low'].min()
+                volume = dataframe.iloc[last_idx:idx + 1]['volume'].sum()
+                trades = int(dataframe.iloc[last_idx:idx + 1]['trades'].sum())
+                taker_buy_asset_volume = dataframe.iloc[last_idx:idx + 1]['taker_buy_base_asset_volume'].sum()
+                interval_data.append(
+                    (start_time, end_time, open_value, close_value, high, low, volume, trades,
+                     taker_buy_asset_volume))
+                last_idx = idx
+                interval_total = 0
+
+        return interval_data
