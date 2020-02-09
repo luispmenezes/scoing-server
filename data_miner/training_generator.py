@@ -101,6 +101,8 @@ class TrainingGenerator:
                                      'bb_up_mdev', 'bb_lo_mdev', 'stoch', 'aroon_up', 'aroon_down', 'prediction'])
 
     def get_latest_prediction_data(self, coin, aggregation):
+        self.logger.debug("Getting latest prediction data for coin:%s agg:%d" % (coin, aggregation))
+
         self.cursor.execute(
             "SELECT idx,open_time,open_value,high,low,close_value,volume,trades,taker_buy_asset_volume " +
             "FROM cointron.binance_intervals WHERE coin=%s ORDER BY idx DESC LIMIT %s", (coin, (aggregation + 1) * 100))
@@ -108,6 +110,8 @@ class TrainingGenerator:
         self.interval_data = pd.DataFrame(self.cursor.fetchall(),
                                           columns=["idx", "open_time", "open_value", "high", "low", "close_value",
                                                    "volume", "trades", "taker_buy_asset_volume"])
+
+        self.interval_data = self.interval_data.sort_values(by='open_time', ascending=True)
 
         return pd.DataFrame([self.training_worker(self.interval_data.shape[0] - 1, aggregation, coin, False)],
                             columns=['coin', 'aggregation', 'open_time', 'close_value', 'high_low_swing', 'price_swing',
@@ -199,7 +203,7 @@ class TrainingGenerator:
         return training_entry
 
     def compute_features(self, data_idx: int, aggregation: int):
-        #TODO: fix and recalculate training data
+        # TODO: fix and recalculate training data
         ma20 = self.compute_moving_average(data_idx, aggregation, 100)
         ma100 = self.compute_moving_average(data_idx, aggregation, 20)
 
