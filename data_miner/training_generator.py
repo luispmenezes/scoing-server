@@ -203,9 +203,8 @@ class TrainingGenerator:
         return training_entry
 
     def compute_features(self, data_idx: int, aggregation: int):
-        # TODO: fix and recalculate training data
-        ma20 = self.compute_moving_average(data_idx, aggregation, 100)
-        ma100 = self.compute_moving_average(data_idx, aggregation, 20)
+        ma20 = self.compute_moving_average(data_idx, aggregation, 20)
+        ma100 = self.compute_moving_average(data_idx, aggregation, 100)
 
         agg_data = self.interval_data.iloc[data_idx - aggregation:data_idx]
 
