@@ -8,9 +8,9 @@ import pandas as pd
 import pytz
 from flask import Flask, jsonify, request
 
-from data_miner.training_generator import TrainingGenerator
-from data_miner.rawdata_collector import RawDataCollector
 from data_miner.interval_calculator import IntervalCalculator
+from data_miner.rawdata_collector import RawDataCollector
+from data_miner.training_generator import TrainingGenerator
 from predictor import Predictor
 from trader_manager import TraderManager
 
