@@ -1,4 +1,5 @@
 import concurrent.futures
+import decimal
 import statistics
 import datetime
 
@@ -198,8 +199,8 @@ class TrainingGenerator:
         current_interval = self.interval_data.iloc[i]
         training_entry = (coin, aggregation, current_interval['open_time'], current_interval['close_value']) + features
         if with_prediction:
-            prediction = float(self.interval_data.iloc[i + aggregation]['close_value'])
-            training_entry += ((prediction / current_interval['close_value']) - 1.0,)
+            prediction = decimal.Decimal(self.interval_data.iloc[i + aggregation]['close_value'])
+            training_entry += ((prediction / current_interval['close_value']) - decimal.Decimal(1.0),)
         return training_entry
 
     def compute_features(self, data_idx: int, aggregation: int):
@@ -213,7 +214,7 @@ class TrainingGenerator:
         close = agg_data['close_value'].iloc[-1]
         volume = agg_data['volume'].sum()
         trades = int(agg_data['trades'].sum())
-        tbav = agg_data['taker_buy_asset_volume'].mean()
+        tbav = decimal.Decimal(agg_data['taker_buy_asset_volume'].mean())
 
         # Price
         high_low_swing = (high - low) / low
@@ -272,7 +273,7 @@ class TrainingGenerator:
         tp_list = []
 
         for i in range(index - intervals * aggregation, index, aggregation):
-            close = self.interval_data.iloc[i - aggregation:i]['close_value'].mean()
+            close = decimal.Decimal(self.interval_data.iloc[i - aggregation:i]['close_value'].mean())
             high = self.interval_data.iloc[i - aggregation:i]['high'].max()
             low = self.interval_data.iloc[i - aggregation:i]['low'].min()
 
@@ -289,7 +290,7 @@ class TrainingGenerator:
         tp_list = []
 
         for i in range(index - intervals * aggregation, index - aggregation, aggregation):
-            close = self.interval_data.iloc[i - aggregation:i]['close_value'].mean()
+            close = decimal.Decimal(self.interval_data.iloc[i - aggregation:i]['close_value'].mean())
             high = self.interval_data.iloc[i - aggregation:i]['high'].max()
             low = self.interval_data.iloc[i - aggregation:i]['low'].min()
 
@@ -299,15 +300,15 @@ class TrainingGenerator:
         avg_tp = sum(tp_list) / len(tp_list)
         md_tp = statistics.stdev(tp_list)
 
-        return (current_tp - avg_tp) / (0.015 * md_tp)
+        return (current_tp - avg_tp) / (decimal.Decimal(0.015) * md_tp)
 
     def __feature_STOCH(self, index: int, aggregation: int, intervals=20):
         n_periods = self.interval_data.iloc[index - intervals * aggregation: index - aggregation]
-        lowestLow = n_periods['close_value'].min()
-        higestHigh = n_periods['close_value'].max()
+        lowest_low = n_periods['close_value'].min()
+        higest_high = n_periods['close_value'].max()
 
-        return (self.interval_data.iloc[index - aggregation:index]['close_value'].mean() - lowestLow) / (
-                higestHigh - lowestLow)
+        return (decimal.Decimal(self.interval_data.iloc[index - aggregation:index]['close_value'].mean()) - lowest_low) \
+               / (higest_high - lowest_low)
 
     def __feature_AROON(self, index: int, aggregation: int, intervals=20):
         max_value = -9999
