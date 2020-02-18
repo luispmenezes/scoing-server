@@ -35,8 +35,6 @@ class TraderManager:
         self.cursor = self.conn.cursor()
 
     def generate_training_data(self):
-        self.logger.info("Generating trader training data")
-
         self.cursor.execute("DELETE FROM cointron.trader_training_data")
         self.conn.commit()
 
@@ -47,6 +45,7 @@ class TraderManager:
             aggregations = TrainingGenerator.get_aggregations()
 
             for agg in aggregations:
+                self.logger.info("Generating trader training data %s - %d" % (coin, agg))
                 data[agg] = self.training_generator.get_training_data((coin,), agg)
                 data_values = data[agg].drop(columns=['prediction'])
                 self.logger.info("Getting predictions for %d model" % agg)

@@ -1,3 +1,4 @@
+import simplejson as json
 import logging
 from datetime import datetime
 from threading import Thread
@@ -6,7 +7,7 @@ from time import sleep
 import flask
 import pandas as pd
 import pytz
-from flask import Flask, jsonify, request
+from flask import Flask, request
 
 from data_miner.interval_calculator import IntervalCalculator
 from data_miner.rawdata_collector import RawDataCollector
@@ -85,7 +86,10 @@ def latest_prediction(coin):
     for key in predictions.keys():
         result["pred_" + str(key)] = float(predictions[key])
 
-    return jsonify(result)
+    response = flask.make_response(json.dumps(result))
+    response.headers['content-type'] = 'application/json'
+
+    return response
 
 
 @app.route('/predictor/predict/<int:aggregation>', methods=['POST'])
@@ -96,7 +100,10 @@ def predict(aggregation):
     for ts in predictions:
         predictions[ts] = float(predictions[ts])
 
-    return jsonify(predictions)
+    response = flask.make_response(json.dumps(predictions))
+    response.headers['content-type'] = 'application/json'
+
+    return response
 
 
 @app.route('/aggregator/training/<string:coin>/<int:aggregation>', methods=['GET'])

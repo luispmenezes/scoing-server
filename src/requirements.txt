@@ -5,3 +5,4 @@ sklearn
 keras
 flask
 tensorflow
+simplejson
