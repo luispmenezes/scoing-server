@@ -25,6 +25,8 @@ class TrainingGenerator:
             self.pool = None
             self.conn = None
             self.cursor = None
+            self.vip_conn = None
+            self.vip_cursor = None
             self.connect_to_db()
             self.logger = logger
             self.interval_data = None
@@ -32,10 +34,12 @@ class TrainingGenerator:
             self.logger.info("Error establishing db connection", error)
 
     def connect_to_db(self):
-        self.pool = psycopg2.pool.SimpleConnectionPool(1, 1, user=self.db_user, password=self.db_password,
+        self.pool = psycopg2.pool.SimpleConnectionPool(2, 2, user=self.db_user, password=self.db_password,
                                                        host=self.db_host, port=self.db_port, database=self.db_name)
         self.conn = self.pool.getconn()
         self.cursor = self.conn.cursor()
+        self.vip_conn = self.pool.getconn()
+        self.vip_cursor = self.vip_conn.cursor()
 
     @staticmethod
     def get_training_features():
@@ -104,11 +108,11 @@ class TrainingGenerator:
     def get_latest_prediction_data(self, coin, aggregation):
         self.logger.debug("Getting latest prediction data for coin:%s agg:%d" % (coin, aggregation))
 
-        self.cursor.execute(
+        self.vip_cursor.execute(
             "SELECT idx,open_time,open_value,high,low,close_value,volume,trades,taker_buy_asset_volume " +
             "FROM cointron.binance_intervals WHERE coin=%s ORDER BY idx DESC LIMIT %s", (coin, (aggregation + 1) * 100))
 
-        self.interval_data = pd.DataFrame(self.cursor.fetchall(),
+        self.interval_data = pd.DataFrame(self.vip_cursor.fetchall(),
                                           columns=["idx", "open_time", "open_value", "high", "low", "close_value",
                                                    "volume", "trades", "taker_buy_asset_volume"])
 
