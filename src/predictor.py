@@ -18,9 +18,9 @@ csv_collumns = ['close_value', 'high_low_swing', 'price_swing', 'close_mdev_20',
 coin_list = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "LTCUSDT", "XRPUSDT"]
 num_features = len(csv_collumns) - 1
 
-base_path = "./data"
-model_output_path = base_path + "/model"
-training_output_path = base_path + "/training"
+data_path = "./data"
+model_output_path = data_path + "/model"
+training_output_path = data_path + "/training"
 
 
 class Predictor:
@@ -52,6 +52,10 @@ class Predictor:
                 temp_scalers_x[agg] = scaler_x
                 temp_scalers_y[agg] = scaler_y
             except Exception:
+
+                if not os.path.exists(data_path):
+                    os.mkdir(data_path)
+
                 dataframe = self.get_training_from_file(coin_list, agg)
                 temp_models[agg], temp_scalers_x[agg], temp_scalers_y[agg] = self.train_model(agg, dataframe)
 
