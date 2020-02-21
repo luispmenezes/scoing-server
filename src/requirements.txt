@@ -1,6 +1,7 @@
 pandas
 psycopg2-binary
 requests
+testresources
 sklearn
 keras
 flask
