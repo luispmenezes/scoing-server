@@ -62,6 +62,9 @@ class Predictor:
         return temp_models, temp_scalers_x, temp_scalers_y
 
     def save_model_files(self, aggregation, model, scaler_X, scaler_Y):
+        if not os.path.exists(model_output_path):
+            os.mkdir(model_output_path)
+
         path = model_output_path + "/" + str(aggregation)
 
         if not os.path.exists(path):
